@@ -210,7 +210,7 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 
 	uint8_t blockhash_half[64] = { 0 };
 	uint8_t gpuinit = 0;
-	struct timeval tv_start, tv_end, diff;
+	struct timeval tv_start, tv_end, tv_now, diff;
 	double secs, solps;
 
 	//__m128i *data_key =  (__m128i *)malloc(VERUS_KEY_SIZE);
@@ -296,6 +296,17 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 			break;
 		}
 		nonce_buf += throughput;
+
+		/* Benchmark mode only. There are no pool jobs, so nothing ever sets work_restart, and the range
+		 * test above compares this counter (which starts at 0) with the miner thread's absolute max_nonce,
+		 * which includes a random start offset of up to ~4 billion. One scan call could therefore run for
+		 * minutes to hours and --benchmark / --time-limit would never report. Bound each call to about
+		 * one second instead, so the hashrate is measured and the time limit is honoured. */
+		if (opt_benchmark && (nonce_buf & 0x3FF) == 0) {
+			gettimeofday(&tv_now, NULL);
+			if ((int64_t)(tv_now.tv_sec - tv_start.tv_sec) * 1000000 + (tv_now.tv_usec - tv_start.tv_usec) >= 1000000)
+				break;
+		}
 
 	} while (!work_restart[thr_id].restart);
 
