@@ -52,6 +52,26 @@
 
 #endif //WIN32
 
+
+/* Ablation switches for timing experiments ONLY (tests/verus_ablate.cpp). They make the hash wrong on
+ * purpose to measure how much time one thing costs, i.e. the most that optimising it could ever win.
+ * All three are inert unless the matching VERUS_ABL_* macro is defined. */
+#if defined(VERUS_ABL_SWITCH_FIXED)
+#  define VERUS_ABL_SWITCH(sel, i) ((((i) & 7) << 2))     /* case follows round number: perfectly predictable */
+#else
+#  define VERUS_ABL_SWITCH(sel, i) ((sel) & 0x1c)
+#endif
+#if defined(VERUS_ABL_INNER_FIXED)
+#  define VERUS_ABL_INNER(sel, rounds) ((rounds) & 1)      /* alternating: predictable inner branch */
+#else
+#  define VERUS_ABL_INNER(sel, rounds) ((sel) & (0x10000000L << (rounds)))
+#endif
+#if defined(VERUS_ABL_NODIV)
+#  define VERUS_ABL_MOD(a, b) ((a) ^ (b))                  /* no hardware divide */
+#else
+#  define VERUS_ABL_MOD(a, b) ((a) % (b))
+#endif
+
 #define AES2(s0, s1, rci) \
   s0 = _mm_aesenc_si128(s0, rc[rci]); \
   s1 = _mm_aesenc_si128(s1, rc[rci + 1]); \
@@ -347,7 +367,7 @@ __m128i __verusclmulwithoutreduction64alignedrepeat_port2_2(__m128i *randomsourc
 		//fixrandex[i] = prandex_idx;
 
 
-		switch (selector & 0x1c)
+		switch (VERUS_ABL_SWITCH(selector, i))
 		{
 		case 0:
 		{
@@ -445,7 +465,7 @@ __m128i __verusclmulwithoutreduction64alignedrepeat_port2_2(__m128i *randomsourc
 
 			const int64_t dividend = _mm_cvtsi128_si64_emu(acc);
                         asm(".global __use_realtime_division\n");
-			const __m128i modulo = _mm_cvtsi32_si128_emu(dividend % divisor);
+			const __m128i modulo = _mm_cvtsi32_si128_emu(VERUS_ABL_MOD(dividend, divisor));
 			acc = _mm_xor_si128_emu(modulo, acc);
 
 			const __m128i tempa1 = _mm_mulhrs_epi16_emu(acc, temp1);
@@ -580,7 +600,7 @@ __m128i __verusclmulwithoutreduction64alignedrepeat_port2_2(__m128i *randomsourc
                                                 onekey = _mm_load_si128_emu(rc++);
                                                 //printf("selector %" PRIu64 "\n", selector);
 
-                                                if (selector & (0x10000000L << rounds))
+                                                if (VERUS_ABL_INNER(selector, rounds))
                                                 {
                                                         const __m128i temp2 = _mm_load_si128_emu(rounds & 1 ? pbuf : pbsf);  //rounds is odd
                                                         const __m128i add1 = _mm_xor_si128_emu(onekey, temp2);
@@ -648,7 +668,7 @@ __m128i __verusclmulwithoutreduction64alignedrepeat_port2_2(__m128i *randomsourc
                         if ( rounds >= 0 )
                         {
                                     onekey = _mm_load_si128_emu(rc++);
-                                    if (selector & (0x10000000L << rounds))
+                                    if (VERUS_ABL_INNER(selector, rounds))
                                     {
                                         const __m128i temp2 = _mm_load_si128_emu(rounds & 1 ? pbuf : pbsf );
                                         onekey = _mm_xor_si128_emu(onekey, temp2);
@@ -656,7 +676,7 @@ __m128i __verusclmulwithoutreduction64alignedrepeat_port2_2(__m128i *randomsourc
   		                        const int32_t divisor = (uint32_t)selector;
                                         const int64_t dividend = _mm_cvtsi128_si64(onekey);
                                         asm(".global __use_realtime_division\n");
-                                        const __m128i modulo = _mm_cvtsi32_si128(dividend % divisor);
+                                        const __m128i modulo = _mm_cvtsi32_si128(VERUS_ABL_MOD(dividend, divisor));
                                         acc = _mm_xor_si128_emu(modulo, acc);
                                     }
                                     else
@@ -747,7 +767,7 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 		//fixrandex[i] = prandex_idx;
 
 
-		switch (selector & 0x1c)
+		switch (VERUS_ABL_SWITCH(selector, i))
 		{
 		case 0:
 		{
@@ -845,7 +865,7 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 
 			const int64_t dividend = _mm_cvtsi128_si64_emu(acc);
                         asm(".global __use_realtime_division\n");
-			const __m128i modulo = _mm_cvtsi32_si128_emu(dividend % divisor);
+			const __m128i modulo = _mm_cvtsi32_si128_emu(VERUS_ABL_MOD(dividend, divisor));
 			acc = _mm_xor_si128_emu(modulo, acc);
 
 			const __m128i tempa1 = _mm_mulhrs_epi16_emu(acc, temp1);
@@ -980,7 +1000,7 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
                                                 onekey = _mm_load_si128_emu(rc++);
                                                 //printf("selector %" PRIu64 "\n", selector);
 
-                                                if (selector & (0x10000000L << rounds))
+                                                if (VERUS_ABL_INNER(selector, rounds))
                                                 {
                                                         const __m128i temp2 = _mm_load_si128_emu(rounds & 1 ? pbuf : pbsf);  //rounds is odd
                                                         const __m128i add1 = _mm_xor_si128_emu(onekey, temp2);
@@ -1048,7 +1068,7 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
                         if ( rounds >= 0 )
                         {
                                     onekey = _mm_load_si128_emu(rc++);
-                                    if (selector & (0x10000000L << rounds))
+                                    if (VERUS_ABL_INNER(selector, rounds))
                                     {
                                         const __m128i temp2 = _mm_load_si128_emu(rounds & 1 ? pbuf : pbsf );
                                         onekey = _mm_xor_si128_emu(onekey, temp2);
@@ -1056,7 +1076,7 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
   		                        const int32_t divisor = (uint32_t)selector;
                                         const int64_t dividend = _mm_cvtsi128_si64(onekey);
                                         asm(".global __use_realtime_division\n");
-                                        const __m128i modulo = _mm_cvtsi32_si128(dividend % divisor);
+                                        const __m128i modulo = _mm_cvtsi32_si128(VERUS_ABL_MOD(dividend, divisor));
                                         acc = _mm_xor_si128_emu(modulo, acc);
                                     }
                                     else
