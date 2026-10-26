@@ -27,10 +27,15 @@ int main(int argc, char **argv)
 	uint64_t distinct_sum = 0, lines_sum = 0, win_hit = 0, hashes = 0, div_per_hash_max = 0, div_total_hashes = 0;
 	fill(key, sizeof(key)); memcpy(kc, key, sizeof(key));
 	for (long it = 0; it < N; it += 2) {
+		if ((it & 0x7f) == 0) { fill(key, sizeof(key)); memcpy(kc, key, sizeof(key)); }  /* new key every 64 pairs */
 		fill(b[0], 64); fill(b[1], 64);
 		uint64_t im[2];
 		verus_dbg_n = 0;
 		verusclhash_port2_2_x2(key, kc, b[0], b[1], 511, fr[0], fre[0], gp[0], gpx[0], fr[1], fre[1], gp[1], gpx[1], im);
+		for (int l = 0; l < 2; l++) {
+			__m128i *kk = l ? kc : key;   /* restore the key as the miner does after every nonce */
+			for (int i = 31; i > -1; i--) { kk[fr[l][i]] = gp[l][i]; kk[fre[l][i]] = gpx[l][i]; }
+		}
 		for (int l = 0; l < 2; l++) {
 			uint8_t seen[560] = {0}; uint8_t line[140] = {0};
 			int distinct = 0, lines = 0, dv = 0;
