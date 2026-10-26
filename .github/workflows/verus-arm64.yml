@@ -70,8 +70,10 @@ jobs:
           build innerfix "-DVERUS_ABL_INNER_FIXED"
           build switchfix "-DVERUS_ABL_SWITCH_FIXED"
           build nofix "-DVERUS_ABL_NOFIX"
+          build noharaka "-DVERUS_ABL_NOHARAKA"
+          build nomulhrs "-DVERUS_ABL_NOMULHRS"
           build all4 "-DVERUS_ABL_NODIV -DVERUS_ABL_INNER_FIXED -DVERUS_ABL_SWITCH_FIXED -DVERUS_ABL_NOFIX"
-          for r in 1 2 3; do for v in full nodiv innerfix switchfix nofix all4; do
+          for r in 1 2 3; do for v in full nodiv innerfix switchfix nofix noharaka nomulhrs all4; do
             echo "$v $(./abl-$v 4)" | tee -a ablate.txt; done; done
       - name: Benchmark (1 thread, 3 alternating rounds, 20 s)
         run: |

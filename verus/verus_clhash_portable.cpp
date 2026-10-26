@@ -100,7 +100,11 @@ FORCE_INLINE __m128i _mm_mulhrs_epi16_emu(__m128i _a, __m128i _b)
 //		result[i] = (int16_t)((((int32_t)(a[i]) * (int32_t)(b[i])) + 0x4000) >> 15);
 //	}
 
+#ifdef VERUS_ABL_NOMULHRS
+	return veorq_s64(_a,_b);   /* timing experiment only */
+#else
 	return vqrdmulhq_s16(_a,_b); //*(__m128i *)result;
+#endif
 }
 
  __m128i _mm_set_epi64x_emu(uint64_t hi, uint64_t lo)

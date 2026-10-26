@@ -31,7 +31,11 @@ int main(int argc, char **argv)
 			memcpy(buf + 32, nonce, 15);
 			uint64_t im = verusclhash_port2_2(key, buf, 511, fr, fre, gp, gpx);
 			memcpy(buf + 47, &im, 8); memcpy(buf + 55, &im, 8); memcpy(buf + 63, &im, 1);
+#ifndef VERUS_ABL_NOHARAKA
 			haraka512_keyed(hash, buf, key + (im & 511));
+#else
+			hash[28] = (unsigned char)im;   /* timing experiment only */
+#endif
 			sink += hash[28];
 #ifndef VERUS_ABL_NOFIX
 			for (int i = 31; i > -1; i--) { key[fr[i]] = gp[i]; key[fre[i]] = gpx[i]; }
