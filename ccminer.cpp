@@ -41,6 +41,7 @@
 #endif
 
 #include "miner.h"
+#include "verus/verus_variant.h"
 #include "algos.h"
 
 #include "equi/equihash.h"
@@ -3695,6 +3696,7 @@ int main(int argc, char *argv[])
         printf("Adapted and compiled by Oink.vrsc@\n");
         printf("Goto https://wiki.verus.io/#!index.md for mining setup guides. \n");
         printf("Git repo located at: " PACKAGE_URL " \n\n");
+	printf("Verus variant: %s\n\n", VERUS_VARIANT_NAME);
 
 	rpc_user = strdup("");
 	rpc_pass = strdup("");

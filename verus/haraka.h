@@ -292,6 +292,33 @@ extern __m128i rc[40];
 //  	s.val[0] = s0; \
 //  	s.val[3] = s3; 
 
+#ifdef VERUS_ZIPMIX
+/* Variant "zipmix": the same permutation as the lane-copy chains above,
+ * written as the reference unpack network:
+ *   t0=zip1(A,B) t1=zip2(A,B) t2=zip1(C,D) t3=zip2(C,D)
+ *   out0=zip2(t1,t3) out1=zip1(t2,t0) out2=zip2(t2,t0) out3=zip1(t1,t3)
+ * (zip1/zip2 on 32-bit lanes == _mm_unpacklo/hi_epi32). Verified lane by
+ * lane against MIX4A/MIX4B/MIX4_LAST in tests/verus_difftest.c. */
+#define VZ1_(a, b) vreinterpretq_s64_s32(vzip1q_s32(vreinterpretq_s32_s64(a), vreinterpretq_s32_s64(b)))
+#define VZ2_(a, b) vreinterpretq_s64_s32(vzip2q_s32(vreinterpretq_s32_s64(a), vreinterpretq_s32_s64(b)))
+#undef MIX4A
+#undef MIX4B
+#undef MIX4_LAST
+#define MIX4A(s0, s1, s2, s3) { \
+  	const __m128i zt0_ = VZ1_(s0, s1), zt1_ = VZ2_(s0, s1), zt2_ = VZ1_(s2, s3), zt3_ = VZ2_(s2, s3); \
+  	n.val[0] = VZ2_(zt1_, zt3_); n.val[1] = VZ1_(zt2_, zt0_); \
+  	n.val[2] = VZ2_(zt2_, zt0_); n.val[3] = VZ1_(zt1_, zt3_); }
+#define MIX4B(s0, s1, s2, s3) { \
+  	const __m128i zt0_ = VZ1_(s0, s1), zt1_ = VZ2_(s0, s1), zt2_ = VZ1_(s2, s3), zt3_ = VZ2_(s2, s3); \
+  	s.val[0] = VZ2_(zt1_, zt3_); s.val[1] = VZ1_(zt2_, zt0_); \
+  	s.val[2] = VZ2_(zt2_, zt0_); s.val[3] = VZ1_(zt1_, zt3_); }
+/* Only s.val[2] is consumed after the last mix (AES4_LAST works on it). The
+ * baseline also fills s.val[1], which is dead; the difftest compares the
+ * final hash word, not that dead lane. */
+#define MIX4_LAST(s0, s1, s2, s3) { \
+  	s.val[2] = VZ2_(VZ1_(s2, s3), VZ1_(s0, s1)); }
+#endif
+
 //tmp = s0.0, s1.0, s0.1, s1.1
 //s1 = s2.0, s3.0, s2.1, s3.1
 //s2 = s2.1, s0.1, s3.1, s1.1

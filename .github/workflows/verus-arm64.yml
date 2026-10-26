@@ -1,0 +1,58 @@
+name: verus-arm64
+# Builds each Verus variant on real arm64 hardware, proves it is bit-identical to baseline,
+# and runs a short single-thread benchmark. Runner CPUs are server cores (not Exynos), so use the
+# numbers only to compare variants against each other, never as phone hashrates.
+on:
+  push:
+    branches: [variants]
+  workflow_dispatch:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld make autoconf automake libtool pkg-config binutils \
+            libcurl4-openssl-dev libjansson-dev libssl-dev zlib1g-dev
+      - name: Show CPU
+        run: |
+          grep -m1 Features /proc/cpuinfo
+          grep -m1 'CPU part' /proc/cpuinfo
+      - name: Build variants and run difftest
+        run: |
+          set -e
+          mkdir -p out
+          for v in baseline zipmix; do
+            fl=""; [ "$v" = zipmix ] && fl="-DVERUS_ZIPMIX"
+            rm -rf "b-$v"; mkdir "b-$v"
+            git ls-files -z | grep -zv '\.o$' | xargs -0 cp --parents -t "b-$v"
+            ( cd "b-$v"
+              find . -name '*.o' -delete; rm -f ccminer *.opt.yaml config.status
+              ./configure.sh
+              make -j"$(nproc)" CPPFLAGS="$fl" )
+            cp "b-$v/ccminer" "out/ccminer-$v"
+            echo "$v: aese=$(objdump -d out/ccminer-$v | grep -cE '\baese\b') pmull=$(objdump -d out/ccminer-$v | grep -cE '\bpmull2?\b')"
+          done
+          CFL="-O2 -march=armv8-a+crypto -fno-strict-aliasing -I. -Iverus"
+          clang $CFL -Dharaka512_keyed=haraka512_keyed_base -c verus/haraka.c -o hb.o
+          clang $CFL -DVERUS_ZIPMIX -Dharaka512_keyed=haraka512_keyed_var -c verus/haraka.c -o hv.o
+          clang $CFL tests/verus_difftest.c hb.o hv.o -o difftest
+          ./difftest 2000000 | tee difftest.txt
+          grep -q PASS difftest.txt
+      - name: Benchmark (1 thread, 3 alternating rounds, 20 s)
+        run: |
+          for r in 1 2 3; do
+            for v in baseline zipmix; do
+              hs=$(./out/ccminer-$v -a verus --benchmark -t 1 --time-limit 20 --no-color 2>&1 | grep -E '^[0-9]+$' | tail -1)
+              echo "round $r $v ${hs:-NONE} H/s" | tee -a bench.txt
+            done
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verus-arm64-results
+          path: |
+            bench.txt
+            difftest.txt
