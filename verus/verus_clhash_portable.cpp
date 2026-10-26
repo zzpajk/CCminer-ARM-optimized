@@ -710,7 +710,7 @@ __m128i __verusclmulwithoutreduction64alignedrepeat_port2_2(__m128i *randomsourc
  * __verusclmulwithoutreduction64alignedrepeat_port2_2 above (generated from it, not rewritten), so two
  * independent nonces can be advanced in lockstep and the out-of-order core can overlap their dependency
  * chains. Each lane has its own key copy: a nonce mutates the key while hashing. */
-static FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *randomsource,
+FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *randomsource,
 		const __m128i *pbuf_copy, uint64_t keyMask, uint16_t * __restrict fixrand,
 		uint16_t * __restrict fixrandex, __m128i *g_prand, __m128i *g_prandex)
 {

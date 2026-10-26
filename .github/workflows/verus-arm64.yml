@@ -45,8 +45,8 @@ jobs:
           grep -q PASS difftest.txt
           clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -I. -Iverus \
             -c verus/verus_clhash_portable.cpp -o clx2.o
-          clang -O2 -march=armv8-a+crypto -fno-strict-aliasing -c verus/haraka.c -o hk.o
-          clang -O2 -march=armv8-a+crypto -fno-strict-aliasing -c verus/haraka_portable.c -o hkp.o
+          clang -O2 -march=armv8-a+crypto -fno-strict-aliasing -I. -Iverus -c verus/haraka.c -o hk.o
+          clang -O2 -march=armv8-a+crypto -fno-strict-aliasing -I. -Iverus -c verus/haraka_portable.c -o hkp.o
           clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -I. -Iverus \
             tests/verus_x2test.cpp clx2.o hk.o hkp.o -o x2test
           ./x2test 200000 | tee -a difftest.txt
