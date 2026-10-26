@@ -30,7 +30,21 @@
 #endif
 
 #ifdef VERUS_X2
-#  define VERUS_VAR_X2 "+x2"
+#  ifndef VERUS_LANES
+#    define VERUS_LANES 2
+#  endif
+#  if VERUS_LANES == 2
+#    define VERUS_VAR_LANES "+x2"
+#  elif VERUS_LANES == 3
+#    define VERUS_VAR_LANES "+x3"
+#  else
+#    define VERUS_VAR_LANES "+x4"
+#  endif
+#  ifdef VERUS_AUTO
+#    define VERUS_VAR_X2 VERUS_VAR_LANES "auto"
+#  else
+#    define VERUS_VAR_X2 VERUS_VAR_LANES
+#  endif
 #else
 #  define VERUS_VAR_X2 ""
 #endif

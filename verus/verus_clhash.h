@@ -22,9 +22,8 @@ uint64_t verusclhash_port2_1(void * random, const unsigned char buf[64], uint64_
 uint64_t verusclhash_port2_2(void * random, const unsigned char buf[64], uint64_t keyMask, uint16_t *  __restrict fixrand, uint16_t * __restrict fixrandex, __m128i *g_prand, __m128i *g_prandex);
 
 #ifdef VERUS_X2
-/* two independent nonces in lockstep; each lane needs its own copy of the key */
-void verusclhash_port2_2_x2(void *randomA, void *randomB, const unsigned char bufA[64], const unsigned char bufB[64], uint64_t keyMask,
-		uint16_t * __restrict fixrandA, uint16_t * __restrict fixrandexA, __m128i *g_prandA, __m128i *g_prandexA,
-		uint16_t * __restrict fixrandB, uint16_t * __restrict fixrandexB, __m128i *g_prandB, __m128i *g_prandexB,
-		uint64_t out[2]);
+/* N independent nonces in lockstep (N = 2, 3 or 4); each lane needs its own copy of the key */
+template<int N>
+void verusclhash_port2_2_xN(void **random, const unsigned char **buf, uint64_t keyMask,
+		uint16_t **fixrand, uint16_t **fixrandex, __m128i **g_prand, __m128i **g_prandex, uint64_t *out);
 #endif

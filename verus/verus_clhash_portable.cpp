@@ -1127,30 +1127,34 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
    
 	}
 
-void verusclhash_port2_2_x2(void *randomA, void *randomB, const unsigned char bufA[64], const unsigned char bufB[64],
-		uint64_t keyMask,
-		uint16_t * __restrict fixrandA, uint16_t * __restrict fixrandexA, __m128i *g_prandA, __m128i *g_prandexA,
-		uint16_t * __restrict fixrandB, uint16_t * __restrict fixrandexB, __m128i *g_prandB, __m128i *g_prandexB,
-		uint64_t out[2])
+/* N independent nonces in lockstep (N = 2..4), each lane with its own key. Round code is the same as the
+ * single-nonce loop; only the order of execution differs. */
+template<int N>
+void verusclhash_port2_2_xN(void **random, const unsigned char **buf, uint64_t keyMask,
+		uint16_t **fixrand, uint16_t **fixrandex, __m128i **g_prand, __m128i **g_prandex, uint64_t *out)
 {
-	const __m128i *a = (const __m128i *)bufA;
-	const __m128i *b = (const __m128i *)bufB;
-	__m128i *rsA = (__m128i *)randomA;
-	__m128i *rsB = (__m128i *)randomB;
-	const __m128i pcA[4] = {_mm_xor_si128(a[0],a[2]), _mm_xor_si128(a[1],a[3]), a[2], a[3]};
-	const __m128i pcB[4] = {_mm_xor_si128(b[0],b[2]), _mm_xor_si128(b[1],b[3]), b[2], b[3]};
-	__m128i accA = _mm_load_si128_emu(rsA + (keyMask + 2));
-	__m128i accB = _mm_load_si128_emu(rsB + (keyMask + 2));
+	__m128i *rs[N];
+	__m128i pc[N][4];
+	__m128i acc[N];
+	for (int l = 0; l < N; l++) {
+		const __m128i *a = (const __m128i *)buf[l];
+		rs[l] = (__m128i *)random[l];
+		pc[l][0] = _mm_xor_si128(a[0], a[2]); pc[l][1] = _mm_xor_si128(a[1], a[3]); pc[l][2] = a[2]; pc[l][3] = a[3];
+		acc[l] = _mm_load_si128_emu(rs[l] + (keyMask + 2));
+	}
 	for (uint64_t i = 0; i < 32; i++)
 	{
-		verus_round_port2_2(accA, i, rsA, pcA, keyMask, fixrandA, fixrandexA, g_prandA, g_prandexA);
-		verus_round_port2_2(accB, i, rsB, pcB, keyMask, fixrandB, fixrandexB, g_prandB, g_prandexB);
+		for (int l = 0; l < N; l++)
+			verus_round_port2_2(acc[l], i, rs[l], pc[l], keyMask, fixrand[l], fixrandex[l], g_prand[l], g_prandex[l]);
 	}
-	accA = _mm_xor_si128_emu(accA, _mm_cvtsi32_si128_emu(0x10000));
-	accB = _mm_xor_si128_emu(accB, _mm_cvtsi32_si128_emu(0x10000));
-	out[0] = precompReduction64_port(accA);
-	out[1] = precompReduction64_port(accB);
+	for (int l = 0; l < N; l++) {
+		acc[l] = _mm_xor_si128_emu(acc[l], _mm_cvtsi32_si128_emu(0x10000));
+		out[l] = precompReduction64_port(acc[l]);
+	}
 }
+template void verusclhash_port2_2_xN<2>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<3>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<4>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 #endif /* VERUS_X2 */
 
 // hashes 64 bytes only by doing a carryless multiplication and reduction of the repeated 64 byte sequence 16 times, 

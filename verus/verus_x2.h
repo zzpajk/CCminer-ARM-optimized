@@ -1,9 +1,9 @@
-/* Two-nonce interleaved Verus2hash (variant "x2"). Only compiled with -DVERUS_X2.
- * Hashes nonce A and nonce B in lockstep. Each lane has its own copy of the 8,832-byte key because a
- * nonce mutates the key while it is hashed (and restores it afterwards), so the lanes must not share it.
- * The per-lane steps are the same code as the single-nonce path; only the order of execution differs,
- * which lets an out-of-order core overlap the two dependency chains. Results must be bit-identical to
- * running Verus2hash twice (tests/verus_x2test.cpp checks that). */
+/* Multi-nonce interleaved Verus2hash (variants x2, x3, x4, auto). Only compiled with -DVERUS_X2.
+ * Hashes N nonces in lockstep (N = VERUS_LANES, default 2). Each lane has its own copy of the 8,832-byte key
+ * because a nonce mutates the key while it is hashed (and restores it afterwards), so lanes must not share it.
+ * The per-lane steps are the same code as the single-nonce path; only the order of execution differs, which
+ * lets an out-of-order core overlap the dependency chains. Results must be bit-identical to running
+ * Verus2hash N times (tests/verus_x2test.cpp checks that). */
 #ifndef VERUS_X2_H
 #define VERUS_X2_H
 #ifdef VERUS_X2
@@ -19,11 +19,15 @@ extern "C" {
 }
 #endif
 
+#ifndef VERUS_LANES
+#define VERUS_LANES 2
+#endif
+
 struct verus_lane {
-	__m128i *key;                 /* private copy of the generated key (>= 552 x 16 bytes) */
+	__m128i *key;                   /* private copy of the generated key (>= 552 x 16 bytes) */
 	uint16_t *fixrand, *fixrandex;  /* 32 entries each */
-	__m128i *gp, *gpx;            /* 32 entries each */
-	unsigned char *buf;           /* private 64-byte VerusHashHalf copy */
+	__m128i *gp, *gpx;              /* 32 entries each */
+	unsigned char *buf;             /* private 64-byte VerusHashHalf copy */
 };
 
 static inline void verus_fixkey_lane(const struct verus_lane *l)
@@ -34,28 +38,25 @@ static inline void verus_fixkey_lane(const struct verus_lane *l)
 	}
 }
 
-/* Same sequence as Verus2hash() for each lane. nonce points to the 15 nonce bytes of that lane. */
-static inline void Verus2hash_x2(unsigned char *hashA, unsigned char *hashB,
-		struct verus_lane *A, struct verus_lane *B,
-		const unsigned char *nonceA, const unsigned char *nonceB)
+/* Same sequence as Verus2hash() for each lane. nonce[l] points to the 15 nonce bytes of lane l;
+ * hash[l] receives that lane's 32-byte result. */
+template<int N>
+static inline void Verus2hash_xN(unsigned char *const *hash, struct verus_lane *L, const unsigned char *const *nonce)
 {
-	unsigned char *bA = A->buf, *bB = B->buf;
-	memcpy(bA + 47, bA, 16);  memcpy(bA + 63, bA, 1);
-	memcpy(bB + 47, bB, 16);  memcpy(bB + 63, bB, 1);
-	memcpy(bA + 32, nonceA, 15);
-	memcpy(bB + 32, nonceB, 15);
-
-	uint64_t im[2];
-	verusclhash_port2_2_x2(A->key, B->key, bA, bB, 511,
-			A->fixrand, A->fixrandex, A->gp, A->gpx,
-			B->fixrand, B->fixrandex, B->gp, B->gpx, im);
-
-	memcpy(bA + 47, &im[0], 8); memcpy(bA + 55, &im[0], 8); memcpy(bA + 63, &im[0], 1);
-	memcpy(bB + 47, &im[1], 8); memcpy(bB + 55, &im[1], 8); memcpy(bB + 63, &im[1], 1);
-	haraka512_keyed(hashA, bA, A->key + (im[0] & 511));
-	haraka512_keyed(hashB, bB, B->key + (im[1] & 511));
-	verus_fixkey_lane(A);
-	verus_fixkey_lane(B);
+	void *rs[N]; const unsigned char *bf[N]; uint16_t *fr[N], *fre[N]; __m128i *gp[N], *gpx[N]; uint64_t im[N];
+	for (int l = 0; l < N; l++) {
+		unsigned char *b = L[l].buf;
+		memcpy(b + 47, b, 16);  memcpy(b + 63, b, 1);
+		memcpy(b + 32, nonce[l], 15);
+		rs[l] = L[l].key; bf[l] = b; fr[l] = L[l].fixrand; fre[l] = L[l].fixrandex; gp[l] = L[l].gp; gpx[l] = L[l].gpx;
+	}
+	verusclhash_port2_2_xN<N>(rs, bf, 511, fr, fre, gp, gpx, im);
+	for (int l = 0; l < N; l++) {
+		unsigned char *b = L[l].buf;
+		memcpy(b + 47, &im[l], 8); memcpy(b + 55, &im[l], 8); memcpy(b + 63, &im[l], 1);
+		haraka512_keyed(hash[l], b, L[l].key + (im[l] & 511));
+	}
+	for (int l = 0; l < N; l++) verus_fixkey_lane(&L[l]);
 }
 
 #endif /* VERUS_X2 */

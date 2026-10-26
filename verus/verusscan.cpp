@@ -203,6 +203,50 @@ extern "C" void Verus2hash(unsigned char *hash, unsigned char *curBuf, unsigned 
 #define posix_memalign(p, a, s) (((*(p)) = _aligned_malloc((s), (a))), *(p) ?0 :errno)
 #endif
 
+
+#ifdef VERUS_X2
+/* How many nonces to hash in lockstep on the core this thread is running on.
+ * VERUS_AUTO: in-order ARM cores (A34/A35/A53/A55/A510) do not overlap the lanes and lose a little
+ * (measured -3% on an A53), so they use the plain single-nonce loop; every other core uses VERUS_LANES.
+ * Without VERUS_AUTO every core uses VERUS_LANES. Decided once per scan call from the current cpu. */
+#ifdef VERUS_AUTO
+#include <stdio.h>
+#include <sched.h>
+static uint8_t g_inorder[1024];
+static void verus_scan_cpuinfo()
+{
+	FILE *f = fopen("/proc/cpuinfo", "r");
+	if (!f) return;
+	char line[256]; int cpu = -1; unsigned impl = 0, part = 0; bool have_i = false, have_p = false;
+	while (fgets(line, sizeof(line), f)) {
+		int v; unsigned u;
+		if (sscanf(line, "processor : %d", &v) == 1) { cpu = v; have_i = have_p = false; }
+		else if (sscanf(line, "CPU implementer : 0x%x", &u) == 1) { impl = u; have_i = true; }
+		else if (sscanf(line, "CPU part : 0x%x", &u) == 1) { part = u; have_p = true; }
+		if (cpu >= 0 && cpu < 1024 && have_i && have_p) {
+			g_inorder[cpu] = (impl == 0x41 && (part == 0xd02 || part == 0xd03 || part == 0xd04 || part == 0xd05 || part == 0xd46));
+			have_i = have_p = false;
+		}
+	}
+	fclose(f);
+}
+#endif
+static int verus_lanes_for_this_core(int thr_id)
+{
+#ifdef VERUS_AUTO
+	static bool once = (verus_scan_cpuinfo(), true); (void)once;
+	int cpu = sched_getcpu();
+	int lanes = (cpu >= 0 && cpu < 1024 && g_inorder[cpu]) ? 1 : VERUS_LANES;
+	static __thread int logged = 0;
+	if (!logged) { logged = 1; applog(LOG_INFO, "Verus thread %d on cpu %d: %d nonce(s) per step", thr_id, cpu, lanes); }
+	return lanes;
+#else
+	(void)thr_id;
+	return VERUS_LANES;
+#endif
+}
+#endif
+
 extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce, unsigned long *hashes_done)
 {
 	//uint32_t _ALIGN(16) endiandata[35];
@@ -268,29 +312,37 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 	throughput = 1;
 	const uint32_t Htarg = ptarget[7];
 #ifdef VERUS_X2
+	if (verus_lanes_for_this_core(thr_id) > 1)
 	{
-		/* variant "x2": two nonces per iteration, each lane with its own key copy (see verus_x2.h). */
-		alignas(64) __m128i keyB[VERUS_KEY_SIZE128 + 8];
-		alignas(64) __m128i gpB[32], gpxB[32];
-		alignas(16) uint8_t halfB[64];
-		uint16_t fixrandB[32], fixrandexB[32];
-		memcpy(keyB, data_key, VERUS_KEY_SIZE128 * sizeof(__m128i));
-		memcpy(halfB, blockhash_half, 64);
-		struct verus_lane LA = { data_key, fixrand, fixrandex, data_key_prand, data_key_prandex, blockhash_half };
-		struct verus_lane LB = { keyB, fixrandB, fixrandexB, gpB, gpxB, halfB };
-		uint8_t nonceB[15];
-		uint32_t vh[2][8];
-		throughput = 2;
+		/* variants x2/x3/x4/auto: VERUS_LANES nonces per iteration, each lane with its own key copy (see verus_x2.h). */
+		const int NL = VERUS_LANES;
+		alignas(64) __m128i keyL[VERUS_LANES - 1][VERUS_KEY_SIZE128 + 8];
+		alignas(64) __m128i gpL[VERUS_LANES - 1][32], gpxL[VERUS_LANES - 1][32];
+		alignas(16) uint8_t halfL[VERUS_LANES - 1][64];
+		uint16_t fixrandL[VERUS_LANES - 1][32], fixrandexL[VERUS_LANES - 1][32];
+		struct verus_lane L[VERUS_LANES];
+		L[0] = (struct verus_lane){ data_key, fixrand, fixrandex, data_key_prand, data_key_prandex, blockhash_half };
+		for (int l = 1; l < NL; l++) {
+			memcpy(keyL[l - 1], data_key, VERUS_KEY_SIZE128 * sizeof(__m128i));
+			memcpy(halfL[l - 1], blockhash_half, 64);
+			L[l] = (struct verus_lane){ keyL[l - 1], fixrandL[l - 1], fixrandexL[l - 1], gpL[l - 1], gpxL[l - 1], halfL[l - 1] };
+		}
+		uint8_t nonceL[VERUS_LANES][15];
+		uint32_t vh[VERUS_LANES][8];
+		unsigned char *hp[VERUS_LANES]; const unsigned char *np[VERUS_LANES];
+		for (int l = 0; l < NL; l++) { hp[l] = (unsigned char *)vh[l]; np[l] = nonceL[l]; }
+		throughput = NL;
 		do {
 			*hashes_done = nonce_buf + throughput;
-			memcpy(nonceB, nonceSpace, 15);
-			((uint32_t *)(&nonceSpace[11]))[0] = nonce_buf;
-			((uint32_t *)(&nonceB[11]))[0] = nonce_buf + 1;
+			for (int l = 0; l < NL; l++) {
+				memcpy(nonceL[l], nonceSpace, 15);
+				((uint32_t *)(&nonceL[l][11]))[0] = nonce_buf + l;
+			}
 			memset(vh, 0, sizeof(vh));
 
-			Verus2hash_x2((unsigned char *)vh[0], (unsigned char *)vh[1], &LA, &LB, nonceSpace, nonceB);
+			Verus2hash_xN<VERUS_LANES>(hp, L, np);
 
-			for (int lane = 0; lane < 2; lane++) {
+			for (int lane = 0; lane < NL; lane++) {
 				if (vh[lane][7] <= Htarg) {
 					((uint32_t *)(&nonceSpace[11]))[0] = nonce_buf + lane;
 					memcpy(vhash, vh[lane], sizeof(vhash));

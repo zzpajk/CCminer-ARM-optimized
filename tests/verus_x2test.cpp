@@ -24,33 +24,37 @@ static void single(unsigned char *hash, unsigned char *buf, const unsigned char 
 
 int main(int argc, char **argv)
 {
+	const int N = VERUS_LANES;
 	long iters = argc > 1 ? atol(argv[1]) : 20000, bad = 0;
-	alignas(64) __m128i key0[560], keyS[560], keyA[560], keyB[560];
-	alignas(64) __m128i gp[3][32], gpx[3][32];
-	uint16_t fr[3][32], fre[3][32];
+	alignas(64) __m128i key0[560], keyS[560], keyL[4][560];
+	alignas(64) __m128i gpL[4][32], gpxL[4][32], gpS[32], gpxS[32];
+	uint16_t frL[4][32], freL[4][32], frS[32], freS[32];
 	for (long it = 0; it < iters; it++) {
 		if (it % 100 == 0) { fill(key0, sizeof(key0)); }
-		alignas(16) unsigned char half[64], bS[64], bA[64], bB[64];
+		alignas(16) unsigned char half[64], bS[64], bL[4][64];
 		fill(half, 64);
-		unsigned char nA[15], nB[15], hS1[32] = {0}, hS2[32] = {0}, hA[32] = {0}, hB[32] = {0};
-		fill(nA, 15); fill(nB, 15);
-		memcpy(keyS, key0, sizeof(key0)); memcpy(keyA, key0, sizeof(key0)); memcpy(keyB, key0, sizeof(key0));
-		memcpy(bS, half, 64); memcpy(bA, half, 64); memcpy(bB, half, 64);
+		unsigned char nonce[4][15], hS[4][32], hL[4][32];
+		memset(hS, 0, sizeof(hS)); memset(hL, 0, sizeof(hL));
+		memcpy(keyS, key0, sizeof(key0));
+		for (int l = 0; l < N; l++) { fill(nonce[l], 15); memcpy(keyL[l], key0, sizeof(key0)); memcpy(bL[l], half, 64); }
 
-		single(hS1, bS, nA, keyS, fr[2], fre[2], gp[2], gpx[2]);
-		memcpy(bS, half, 64);
-		single(hS2, bS, nB, keyS, fr[2], fre[2], gp[2], gpx[2]);
-
-		struct verus_lane LA = { keyA, fr[0], fre[0], gp[0], gpx[0], bA };
-		struct verus_lane LB = { keyB, fr[1], fre[1], gp[1], gpx[1], bB };
-		Verus2hash_x2(hA, hB, &LA, &LB, nA, nB);
-
-		if (memcmp(hS1, hA, 32) || memcmp(hS2, hB, 32) || memcmp(keyA, key0, sizeof(key0)) ||
-		    memcmp(keyB, key0, sizeof(key0)) || memcmp(keyS, key0, sizeof(key0))) {
-			if (bad < 5) printf("mismatch at iteration %ld\n", it);
-			bad++;
+		for (int l = 0; l < N; l++) {
+			memcpy(bS, half, 64);
+			single(hS[l], bS, nonce[l], keyS, frS, freS, gpS, gpxS);
 		}
+		struct verus_lane L[4];
+		unsigned char *hp[4]; const unsigned char *np[4];
+		for (int l = 0; l < N; l++) {
+			L[l] = (struct verus_lane){ keyL[l], frL[l], freL[l], gpL[l], gpxL[l], bL[l] };
+			hp[l] = hL[l]; np[l] = nonce[l];
+		}
+		Verus2hash_xN<VERUS_LANES>(hp, L, np);
+
+		bool ok = !memcmp(keyS, key0, sizeof(key0));
+		for (int l = 0; l < N; l++)
+			ok = ok && !memcmp(hS[l], hL[l], 32) && !memcmp(keyL[l], key0, sizeof(key0));
+		if (!ok) { if (bad < 5) printf("mismatch at iteration %ld\n", it); bad++; }
 	}
-	printf("x2test: %ld iterations, %ld mismatches -> %s\n", iters, bad, bad ? "FAIL" : "PASS");
+	printf("x2test (%d lanes): %ld iterations, %ld mismatches -> %s\n", N, iters, bad, bad ? "FAIL" : "PASS");
 	return bad != 0;
 }

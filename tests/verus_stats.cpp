@@ -31,7 +31,10 @@ int main(int argc, char **argv)
 		fill(b[0], 64); fill(b[1], 64);
 		uint64_t im[2];
 		verus_dbg_n = 0;
-		verusclhash_port2_2_x2(key, kc, b[0], b[1], 511, fr[0], fre[0], gp[0], gpx[0], fr[1], fre[1], gp[1], gpx[1], im);
+		void *rsp[2] = { key, kc }; const unsigned char *bp[2] = { b[0], b[1] };
+		uint16_t *frp[2] = { fr[0], fr[1] }, *frep[2] = { fre[0], fre[1] };
+		__m128i *gpp[2] = { gp[0], gp[1] }, *gpxp[2] = { gpx[0], gpx[1] };
+		verusclhash_port2_2_xN<2>(rsp, bp, 511, frp, frep, gpp, gpxp, im);
 		for (int l = 0; l < 2; l++) {
 			__m128i *kk = l ? kc : key;   /* restore the key as the miner does after every nonce */
 			for (int i = 31; i > -1; i--) { kk[fr[l][i]] = gp[l][i]; kk[fre[l][i]] = gpx[l][i]; }
