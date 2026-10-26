@@ -24,6 +24,7 @@ jobs:
       - name: Build variants and run difftest
         run: |
           set -e
+          exec > >(tee build.log) 2>&1
           mkdir -p out
           for v in baseline zipmix x2; do
             fl=""; [ "$v" = zipmix ] && fl="-DVERUS_ZIPMIX"; [ "$v" = x2 ] && fl="-DVERUS_X2"
@@ -61,10 +62,11 @@ jobs:
       - name: Publish results as annotations
         if: always()
         run: |
+          [ -f build.log ] && echo "::notice title=buildlog::$(grep -v '^make\|^  CXX\|^  CC' build.log | tail -25 | tr '\n' '|' | cut -c1-3500)"
           echo "::notice title=cpu::$(grep -m1 'CPU part' /proc/cpuinfo) | $(grep -m1 Features /proc/cpuinfo | cut -c1-120)"
-          echo "::notice title=difftest::$(tr '\n' ';' < difftest.txt)"
-          for l in "$(cat bench.txt | tr '\n' ';')"; do echo "::notice title=bench::$l"; done
-          cat bench.txt difftest.txt >> "$GITHUB_STEP_SUMMARY"
+          [ -f difftest.txt ] && echo "::notice title=difftest::$(tr '\n' ';' < difftest.txt)"
+          [ -f bench.txt ] && for l in "$(cat bench.txt | tr '\n' ';')"; do echo "::notice title=bench::$l"; done
+          cat bench.txt difftest.txt >> "$GITHUB_STEP_SUMMARY" || true
       - uses: actions/upload-artifact@v4
         with:
           name: verus-arm64-results
