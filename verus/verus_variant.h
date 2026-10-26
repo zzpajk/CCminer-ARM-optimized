@@ -17,6 +17,9 @@
  *   x2         VERUS_X2      two nonces hashed in lockstep, each with its own key copy, so an
  *                            out-of-order core can overlap the two dependency chains
  *
+ *   x2fuse     VERUS_X2 VERUS_FUSE  two lanes with one 64-way jump on the pair of cases per round;
+ *                            straight-line pairs run interleaved in one block (tools/gen_fuse.py)
+ *
  * Variants are combined by defining more than one flag; the name then lists
  * them joined with '+'.
  */
@@ -40,10 +43,15 @@
 #  else
 #    define VERUS_VAR_LANES "+x4"
 #  endif
-#  ifdef VERUS_AUTO
-#    define VERUS_VAR_X2 VERUS_VAR_LANES "auto"
+#  ifdef VERUS_FUSE
+#    define VERUS_VAR_FUSE "fuse"
 #  else
-#    define VERUS_VAR_X2 VERUS_VAR_LANES
+#    define VERUS_VAR_FUSE ""
+#  endif
+#  ifdef VERUS_AUTO
+#    define VERUS_VAR_X2 VERUS_VAR_LANES VERUS_VAR_FUSE "auto"
+#  else
+#    define VERUS_VAR_X2 VERUS_VAR_LANES VERUS_VAR_FUSE
 #  endif
 #else
 #  define VERUS_VAR_X2 ""

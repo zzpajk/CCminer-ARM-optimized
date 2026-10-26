@@ -50,6 +50,12 @@ static inline void Verus2hash_xN(unsigned char *const *hash, struct verus_lane *
 		memcpy(b + 32, nonce[l], 15);
 		rs[l] = L[l].key; bf[l] = b; fr[l] = L[l].fixrand; fre[l] = L[l].fixrandex; gp[l] = L[l].gp; gpx[l] = L[l].gpx;
 	}
+#ifdef VERUS_FUSE
+	if (N == 2)
+		verusclhash_port2_2_fuse2((__m128i *)rs[0], (__m128i *)rs[1], bf[0], bf[1], 511,
+				fr[0], fre[0], gp[0], gpx[0], fr[N - 1], fre[N - 1], gp[N - 1], gpx[N - 1], im);
+	else
+#endif
 	verusclhash_port2_2_xN<N>(rs, bf, 511, fr, fre, gp, gpx, im);
 	for (int l = 0; l < N; l++) {
 		unsigned char *b = L[l].buf;

@@ -26,4 +26,12 @@ uint64_t verusclhash_port2_2(void * random, const unsigned char buf[64], uint64_
 template<int N>
 void verusclhash_port2_2_xN(void **random, const unsigned char **buf, uint64_t keyMask,
 		uint16_t **fixrand, uint16_t **fixrandex, __m128i **g_prand, __m128i **g_prandex, uint64_t *out);
+#ifdef VERUS_FUSE
+/* two lanes, one 64-way dispatch per round on the pair of cases (variant x2fuse) */
+void verusclhash_port2_2_fuse2(__m128i * __restrict rsA, __m128i * __restrict rsB,
+		const unsigned char *bufA, const unsigned char *bufB, uint64_t keyMask,
+		uint16_t * __restrict fixrandA, uint16_t * __restrict fixrandexA, __m128i * __restrict g_prandA, __m128i * __restrict g_prandexA,
+		uint16_t * __restrict fixrandB, uint16_t * __restrict fixrandexB, __m128i * __restrict g_prandB, __m128i * __restrict g_prandexB,
+		uint64_t out[2]);
+#endif
 #endif
