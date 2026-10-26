@@ -23,6 +23,8 @@
  *   x2sel      VERUS_X2 VERUS_SEL14  x2 where the inner aes/clmul choice of case 0x14 is made with a
  *                            select instead of a branch (two-nonce path only)
  *
+ *   x2sel2     x2sel plus the same for case 0x18 (divide/clmul), at the price of a divide per iteration
+ *
  * Variants are combined by defining more than one flag; the name then lists
  * them joined with '+'.
  */
@@ -48,6 +50,8 @@
 #  endif
 #  ifdef VERUS_FUSE
 #    define VERUS_VAR_FUSE "fuse"
+#  elif defined(VERUS_SEL14) && defined(VERUS_SEL18)
+#    define VERUS_VAR_FUSE "sel2"
 #  elif defined(VERUS_SEL14)
 #    define VERUS_VAR_FUSE "sel"
 #  else

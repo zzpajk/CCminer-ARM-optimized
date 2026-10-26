@@ -1095,6 +1095,28 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
                         if ( rounds >= 0 )
                         {
                                     onekey = _mm_load_si128_emu(rc++);
+#ifdef VERUS_SEL18
+                                    /* variant x2sel2: both arms computed, result selected without a branch.
+                                     * The divide arm does not depend on acc, so it runs ahead on an
+                                     * out-of-order core; the price is a divide on every iteration. */
+                                    {
+                                        const uint64_t bit = VERUS_ABL_INNER(selector, rounds) ? 1 : 0;
+                                        const __m128i td = _mm_load_si128_emu(rounds & 1 ? pbuf : pbsf );
+                                        const __m128i okd = _mm_xor_si128_emu(onekey, td);
+                                        const int32_t divisor = (uint32_t)selector;
+                                        const int64_t dividend = _mm_cvtsi128_si64(okd);
+                                        asm(".global __use_realtime_division\n");
+                                        const __m128i modulo = _mm_cvtsi32_si128(VERUS_ABL_MOD(dividend, divisor));
+                                        const __m128i accd = _mm_xor_si128_emu(modulo, acc);
+                                        const __m128i tcl = _mm_load_si128_emu(rounds & 1 ? pbsf : pbuf);
+                                        const __m128i addc = _mm_xor_si128_emu(onekey, tcl);
+                                        const __m128i okc = _mm_clmulepi64_si128_emu(addc, addc, 0x10);
+                                        const __m128i accc = _mm_xor_si128_emu(_mm_mulhrs_epi16_emu(acc, okc), acc);
+                                        const uint64x2_t m = vdupq_n_u64(0 - bit);
+                                        acc = vreinterpretq_s64_u64(vbslq_u64(m, vreinterpretq_u64_s64(accd), vreinterpretq_u64_s64(accc)));
+                                        onekey = vreinterpretq_s64_u64(vbslq_u64(m, vreinterpretq_u64_s64(okd), vreinterpretq_u64_s64(okc)));
+                                    }
+#else
                                     if (VERUS_ABL_INNER(selector, rounds))
                                     {
                                         const __m128i temp2 = _mm_load_si128_emu(rounds & 1 ? pbuf : pbsf );
@@ -1114,6 +1136,7 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
                                         const __m128i clprod2 = _mm_mulhrs_epi16_emu(acc, onekey);
                                         acc = _mm_xor_si128_emu(clprod2, acc);
                                     }
+#endif
                                     rounds--;
                         }
                 }
