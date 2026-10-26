@@ -20,6 +20,9 @@
  *   x2fuse     VERUS_X2 VERUS_FUSE  two lanes with one 64-way jump on the pair of cases per round;
  *                            straight-line pairs run interleaved in one block (tools/gen_fuse.py)
  *
+ *   x2sel      VERUS_X2 VERUS_SEL14  x2 where the inner aes/clmul choice of case 0x14 is made with a
+ *                            select instead of a branch (two-nonce path only)
+ *
  * Variants are combined by defining more than one flag; the name then lists
  * them joined with '+'.
  */
@@ -45,6 +48,8 @@
 #  endif
 #  ifdef VERUS_FUSE
 #    define VERUS_VAR_FUSE "fuse"
+#  elif defined(VERUS_SEL14)
+#    define VERUS_VAR_FUSE "sel"
 #  else
 #    define VERUS_VAR_FUSE ""
 #  endif

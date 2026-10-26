@@ -1004,6 +1004,28 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
                                                 onekey = _mm_load_si128_emu(rc++);
                                                 //printf("selector %" PRIu64 "\n", selector);
 
+#ifdef VERUS_SEL14
+                                                /* variant x2sel: both arms are computed and the result is selected
+                                                 * without a branch. Neither arm depends on acc until the final XOR, so
+                                                 * an out-of-order core runs them ahead; this removes a 50/50 branch
+                                                 * per iteration. Same result as the if/else below. */
+                                                {
+                                                        const uint64_t bit = VERUS_ABL_INNER(selector, rounds) ? 1 : 0;
+                                                        const __m128i tc = _mm_load_si128_emu(rounds & 1 ? pbuf : pbsf);
+                                                        const __m128i addc = _mm_xor_si128_emu(onekey, tc);
+                                                        const __m128i clprodc = _mm_clmulepi64_si128_emu(addc, addc, 0x10);
+                                                        __m128i ka = onekey;
+                                                        __m128i ta = _mm_load_si128_emu(rounds & 1 ? pbsf : pbuf);
+                                                        const uint64_t roundidx = aesround << 2;
+                                                        AES2(ka, ta, roundidx);
+                                                        MIX2_EMU(ka, ta);
+                                                        const __m128i aesv = _mm_xor_si128_emu(ka, ta);
+                                                        const uint64x2_t m = vdupq_n_u64(0 - bit);
+                                                        acc = _mm_xor_si128_emu(acc, vreinterpretq_s64_u64(vbslq_u64(m,
+                                                                vreinterpretq_u64_s64(clprodc), vreinterpretq_u64_s64(aesv))));
+                                                        aesround += 1 - bit;
+                                                }
+#else
                                                 if (VERUS_ABL_INNER(selector, rounds))
                                                 {
                                                         const __m128i temp2 = _mm_load_si128_emu(rounds & 1 ? pbuf : pbsf);  //rounds is odd
@@ -1021,6 +1043,7 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 
                                                         acc ^= onekey ^ temp2;
                                                 }
+#endif
                                 rounds--;
                                 }
                         }

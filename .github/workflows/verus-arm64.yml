@@ -26,10 +26,10 @@ jobs:
           set -e
           exec > >(tee build.log) 2>&1
           mkdir -p out
-          for v in baseline zipmix x2 x3 x4 x2auto x2fuse; do
+          for v in baseline x2 x2auto x2fuse x2sel x2selauto; do
             case "$v" in baseline) fl="";; zipmix) fl="-DVERUS_ZIPMIX";; x2) fl="-DVERUS_X2";;
               x3) fl="-DVERUS_X2 -DVERUS_LANES=3";; x4) fl="-DVERUS_X2 -DVERUS_LANES=4";;
-              x2auto) fl="-DVERUS_X2 -DVERUS_AUTO";; x2fuse) fl="-DVERUS_X2 -DVERUS_FUSE";; esac
+              x2auto) fl="-DVERUS_X2 -DVERUS_AUTO";; x2fuse) fl="-DVERUS_X2 -DVERUS_FUSE";; x2sel) fl="-DVERUS_X2 -DVERUS_SEL14";; x2selauto) fl="-DVERUS_X2 -DVERUS_SEL14 -DVERUS_AUTO";; esac
             rm -rf "b-$v"; mkdir "b-$v"
             git ls-files -z | grep -zv '\.o$' | xargs -0 cp --parents -t "b-$v"
             ( cd "b-$v"
@@ -59,8 +59,13 @@ jobs:
           clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_FUSE -I. -Iverus \
             tests/verus_x2test.cpp clfuse.o hk.o hkp.o -o x2testfuse
           ./x2testfuse 300000 | sed 's/x2test/x2test fuse/' | tee -a difftest.txt
+          clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_SEL14 -I. -Iverus \
+            -c verus/verus_clhash_portable.cpp -o clsel.o
+          clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_SEL14 -I. -Iverus \
+            tests/verus_x2test.cpp clsel.o hk.o hkp.o -o x2testsel
+          ./x2testsel 300000 | sed 's/x2test/x2test sel/' | tee -a difftest.txt
           ! grep -q FAIL difftest.txt
-          [ "$(grep -c 'x2test.*PASS' difftest.txt)" = 4 ]
+          [ "$(grep -c 'x2test.*PASS' difftest.txt)" = 5 ]
       - name: Selector statistics
         run: |
           clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_STATS -I. -Iverus \
@@ -92,7 +97,7 @@ jobs:
       - name: Benchmark (1 thread, 3 alternating rounds, 20 s)
         run: |
           for r in 1 2 3; do
-            for v in baseline x2 x2fuse; do
+            for v in baseline x2 x2sel; do
               hs=$(./out/ccminer-$v -a verus --benchmark -t 1 --time-limit 20 --no-color 2>&1 | grep -E '^[0-9]+$' | tail -1)
               echo "round $r $v ${hs:-NONE} H/s" | tee -a bench.txt
             done
