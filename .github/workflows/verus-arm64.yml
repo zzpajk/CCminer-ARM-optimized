@@ -50,6 +50,13 @@ jobs:
               echo "round $r $v ${hs:-NONE} H/s" | tee -a bench.txt
             done
           done
+      - name: Publish results as annotations
+        if: always()
+        run: |
+          echo "::notice title=cpu::$(grep -m1 'CPU part' /proc/cpuinfo) | $(grep -m1 Features /proc/cpuinfo | cut -c1-120)"
+          echo "::notice title=difftest::$(tail -1 difftest.txt)"
+          for l in "$(cat bench.txt | tr '\n' ';')"; do echo "::notice title=bench::$l"; done
+          cat bench.txt difftest.txt >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
           name: verus-arm64-results
