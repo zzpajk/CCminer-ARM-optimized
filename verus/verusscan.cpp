@@ -247,6 +247,76 @@ static int verus_lanes_for_this_core(int thr_id)
 }
 #endif
 
+
+#ifdef VERUS_X2
+struct verus_scan_ctx {
+	struct work *work; int thr_id; uint32_t max_nonce; unsigned long *hashes_done; uint32_t nonce_buf;
+	uint8_t *nonceSpace; uint8_t *full_data; uint8_t *sol_data; uint32_t Htarg; uint32_t *vhash;
+	__m128i *data_key; uint16_t *fixrand; uint16_t *fixrandex; __m128i *gp; __m128i *gpx;
+	uint8_t *blockhash_half; struct timeval tv_start;
+};
+
+/* variants x2/x3/x4/auto: VERUS_LANES nonces per iteration, each lane with its own key copy (see verus_x2.h). */
+static __attribute__((noinline)) void verus_scan_lanes(struct verus_scan_ctx *c)
+{
+	struct work *work = c->work;
+	uint32_t nonce_buf = c->nonce_buf;
+	const uint32_t Htarg = c->Htarg;
+	uint8_t *nonceSpace = c->nonceSpace;
+	struct timeval tv_now;
+	const int NL = VERUS_LANES;
+	alignas(64) __m128i keyL[VERUS_LANES - 1][VERUS_KEY_SIZE128 + 8];
+	alignas(64) __m128i gpL[VERUS_LANES - 1][32], gpxL[VERUS_LANES - 1][32];
+	alignas(16) uint8_t halfL[VERUS_LANES - 1][64];
+	uint16_t fixrandL[VERUS_LANES - 1][32], fixrandexL[VERUS_LANES - 1][32];
+	struct verus_lane L[VERUS_LANES];
+	L[0] = (struct verus_lane){ c->data_key, c->fixrand, c->fixrandex, c->gp, c->gpx, c->blockhash_half };
+	for (int l = 1; l < NL; l++) {
+		memcpy(keyL[l - 1], c->data_key, VERUS_KEY_SIZE128 * sizeof(__m128i));
+		memcpy(halfL[l - 1], c->blockhash_half, 64);
+		L[l] = (struct verus_lane){ keyL[l - 1], fixrandL[l - 1], fixrandexL[l - 1], gpL[l - 1], gpxL[l - 1], halfL[l - 1] };
+	}
+	uint8_t nonceL[VERUS_LANES][15];
+	uint32_t vh[VERUS_LANES][8];
+	unsigned char *hp[VERUS_LANES]; const unsigned char *np[VERUS_LANES];
+	for (int l = 0; l < NL; l++) { hp[l] = (unsigned char *)vh[l]; np[l] = nonceL[l]; }
+	throughput = NL;
+	do {
+		*c->hashes_done = nonce_buf + throughput;
+		for (int l = 0; l < NL; l++) {
+			memcpy(nonceL[l], nonceSpace, 15);
+			((uint32_t *)(&nonceL[l][11]))[0] = nonce_buf + l;
+		}
+		memset(vh, 0, sizeof(vh));
+
+		Verus2hash_xN<VERUS_LANES>(hp, L, np);
+
+		for (int lane = 0; lane < NL; lane++) {
+			if (vh[lane][7] <= Htarg) {
+				((uint32_t *)(&nonceSpace[11]))[0] = nonce_buf + lane;
+				memcpy(c->vhash, vh[lane], 8 * sizeof(uint32_t));
+				work->valid_nonces++;
+				memcpy(work->data, c->full_data, 140);
+				int nonce = work->valid_nonces - 1;
+				memcpy(work->extra, c->sol_data, 1347);
+				memcpy(work->extra + 1332, nonceSpace, 15);
+				bn_store_hash_target_ratio(c->vhash, work->target, work, nonce);
+				work->nonces[work->valid_nonces - 1] = ((uint32_t*)c->full_data)[NONCE_OFT];
+				return;
+			}
+		}
+		if ( __builtin_expect ( (uint64_t)throughput + (uint64_t)nonce_buf >= (uint64_t)c->max_nonce, 0) )
+			break;
+		nonce_buf += throughput;
+		if (opt_benchmark && (nonce_buf & 0x3FF) == 0) {
+			gettimeofday(&tv_now, NULL);
+			if ((int64_t)(tv_now.tv_sec - c->tv_start.tv_sec) * 1000000 + (tv_now.tv_usec - c->tv_start.tv_usec) >= 1000000)
+				break;
+		}
+	} while (!work_restart[c->thr_id].restart);
+}
+#endif
+
 extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce, unsigned long *hashes_done)
 {
 	//uint32_t _ALIGN(16) endiandata[35];
@@ -314,57 +384,11 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 #ifdef VERUS_X2
 	if (verus_lanes_for_this_core(thr_id) > 1)
 	{
-		/* variants x2/x3/x4/auto: VERUS_LANES nonces per iteration, each lane with its own key copy (see verus_x2.h). */
-		const int NL = VERUS_LANES;
-		alignas(64) __m128i keyL[VERUS_LANES - 1][VERUS_KEY_SIZE128 + 8];
-		alignas(64) __m128i gpL[VERUS_LANES - 1][32], gpxL[VERUS_LANES - 1][32];
-		alignas(16) uint8_t halfL[VERUS_LANES - 1][64];
-		uint16_t fixrandL[VERUS_LANES - 1][32], fixrandexL[VERUS_LANES - 1][32];
-		struct verus_lane L[VERUS_LANES];
-		L[0] = (struct verus_lane){ data_key, fixrand, fixrandex, data_key_prand, data_key_prandex, blockhash_half };
-		for (int l = 1; l < NL; l++) {
-			memcpy(keyL[l - 1], data_key, VERUS_KEY_SIZE128 * sizeof(__m128i));
-			memcpy(halfL[l - 1], blockhash_half, 64);
-			L[l] = (struct verus_lane){ keyL[l - 1], fixrandL[l - 1], fixrandexL[l - 1], gpL[l - 1], gpxL[l - 1], halfL[l - 1] };
-		}
-		uint8_t nonceL[VERUS_LANES][15];
-		uint32_t vh[VERUS_LANES][8];
-		unsigned char *hp[VERUS_LANES]; const unsigned char *np[VERUS_LANES];
-		for (int l = 0; l < NL; l++) { hp[l] = (unsigned char *)vh[l]; np[l] = nonceL[l]; }
-		throughput = NL;
-		do {
-			*hashes_done = nonce_buf + throughput;
-			for (int l = 0; l < NL; l++) {
-				memcpy(nonceL[l], nonceSpace, 15);
-				((uint32_t *)(&nonceL[l][11]))[0] = nonce_buf + l;
-			}
-			memset(vh, 0, sizeof(vh));
-
-			Verus2hash_xN<VERUS_LANES>(hp, L, np);
-
-			for (int lane = 0; lane < NL; lane++) {
-				if (vh[lane][7] <= Htarg) {
-					((uint32_t *)(&nonceSpace[11]))[0] = nonce_buf + lane;
-					memcpy(vhash, vh[lane], sizeof(vhash));
-					work->valid_nonces++;
-					memcpy(work->data, full_data, 140);
-					int nonce = work->valid_nonces - 1;
-					memcpy(work->extra, sol_data, 1347);
-					memcpy(work->extra + 1332, nonceSpace, 15);
-					bn_store_hash_target_ratio(vhash, work->target, work, nonce);
-					work->nonces[work->valid_nonces - 1] = ((uint32_t*)full_data)[NONCE_OFT];
-					goto out;
-				}
-			}
-			if ( __builtin_expect ( (uint64_t)throughput + (uint64_t)nonce_buf >= (uint64_t)max_nonce, 0) )
-				break;
-			nonce_buf += throughput;
-			if (opt_benchmark && (nonce_buf & 0x3FF) == 0) {
-				gettimeofday(&tv_now, NULL);
-				if ((int64_t)(tv_now.tv_sec - tv_start.tv_sec) * 1000000 + (tv_now.tv_usec - tv_start.tv_usec) >= 1000000)
-					break;
-			}
-		} while (!work_restart[thr_id].restart);
+		/* The multi-nonce loop lives in its own noinline function so that this function (and the plain loop
+		 * below, which is the baseline code) is compiled exactly as in the baseline build. */
+		struct verus_scan_ctx c = { work, thr_id, max_nonce, hashes_done, nonce_buf, nonceSpace, full_data, sol_data,
+			Htarg, vhash, data_key, fixrand, fixrandex, data_key_prand, data_key_prandex, blockhash_half, tv_start };
+		verus_scan_lanes(&c);
 		goto out;
 	}
 #endif
