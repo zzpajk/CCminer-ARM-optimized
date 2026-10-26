@@ -1,0 +1,27 @@
+name: x2auto-build
+# Runs the user-facing build script on a clean arm64 machine and checks the result.
+on:
+  push:
+    branches: [x2auto]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build with build-x2auto.sh
+        run: bash build-x2auto.sh 2>&1 | tee build.out
+      - name: Check banner, variant and a short benchmark
+        run: |
+          set -e
+          ./ccminer-x2auto -a verus --benchmark -t 2 --time-limit 8 --no-color 2>&1 | tee run.out | head -40
+          grep -q "Verus variant: x2auto" run.out
+          grep -q "nonce(s) per step" run.out
+          HS=$(grep -E '^[0-9]+$' run.out | tail -1)
+          echo "::notice title=x2auto::built ok, 2 threads: ${HS:-no result} H/s; $(grep -m2 'nonce(s) per step' run.out | sed 's/^.*Verus/Verus/' | tr '\n' '|')"
+          test -n "$HS"
+      - name: Publish build output on failure
+        if: failure()
+        run: |
+          echo "::error title=buildout::$(tail -25 build.out 2>/dev/null | tr '\n' '|' | cut -c1-3500)"
