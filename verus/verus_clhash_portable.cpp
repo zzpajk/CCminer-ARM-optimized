@@ -705,6 +705,11 @@ __m128i __verusclmulwithoutreduction64alignedrepeat_port2_2(__m128i *randomsourc
 	return acc;
 }
 
+#ifdef VERUS_STATS
+/* statistics build only: selector of every round of the last x2 call, one row per lane */
+uint64_t verus_dbg_sel[2][32];
+uint32_t verus_dbg_n;
+#endif
 #ifdef VERUS_X2
 /* One round of the 32-round clhash loop, identical to the loop body of
  * __verusclmulwithoutreduction64alignedrepeat_port2_2 above (generated from it, not rewritten), so two
@@ -719,6 +724,9 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 		//std::cout << "LOOP " << i << " acc: " << LEToHex(acc) << std::endl;
 
 		const uint64_t selector = _mm_cvtsi128_si64_emu(acc);
+#ifdef VERUS_STATS
+		verus_dbg_sel[(verus_dbg_n++) & 1][i] = selector;
+#endif
 		const uint64_t selector_fudge = selector & 1 ? 1 : -1 ;
 
 		// get two random locations in the key, which will be mutated and swapped

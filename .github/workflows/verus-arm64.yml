@@ -51,6 +51,13 @@ jobs:
             tests/verus_x2test.cpp clx2.o hk.o hkp.o -o x2test
           ./x2test 200000 | tee -a difftest.txt
           grep -q "x2test.*PASS" difftest.txt
+      - name: Selector statistics
+        run: |
+          clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_STATS -I. -Iverus \
+            -c verus/verus_clhash_portable.cpp -o cls.o
+          clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_STATS -I. -Iverus \
+            tests/verus_stats.cpp cls.o hk.o hkp.o -o vstats
+          ./vstats 400000 | tee stats.txt
       - name: Benchmark (1 thread, 3 alternating rounds, 20 s)
         run: |
           for r in 1 2 3; do
@@ -64,6 +71,7 @@ jobs:
         run: |
           [ -f build.log ] && echo "::notice title=buildlog::$(grep -v '^make\|^  CXX\|^  CC' build.log | tail -25 | tr '\n' '|' | cut -c1-3500)"
           echo "::notice title=cpu::$(grep -m1 'CPU part' /proc/cpuinfo) | $(grep -m1 Features /proc/cpuinfo | cut -c1-120)"
+          [ -f stats.txt ] && echo "::notice title=stats::$(tr '\n' '|' < stats.txt)"
           [ -f difftest.txt ] && echo "::notice title=difftest::$(tr '\n' ';' < difftest.txt)"
           [ -f bench.txt ] && for l in "$(cat bench.txt | tr '\n' ';')"; do echo "::notice title=bench::$l"; done
           cat bench.txt difftest.txt >> "$GITHUB_STEP_SUMMARY" || true
