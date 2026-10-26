@@ -14,6 +14,9 @@
  *              reference unpack/zip network (8 single-cycle ZIPs, depth 2)
  *              instead of chains of dependent lane inserts
  *
+ *   x2         VERUS_X2      two nonces hashed in lockstep, each with its own key copy, so an
+ *                            out-of-order core can overlap the two dependency chains
+ *
  * Variants are combined by defining more than one flag; the name then lists
  * them joined with '+'.
  */
@@ -26,10 +29,16 @@
 #  define VERUS_VAR_ZIPMIX ""
 #endif
 
-#define VERUS_VARIANT_NAME_RAW "baseline" VERUS_VAR_ZIPMIX
+#ifdef VERUS_X2
+#  define VERUS_VAR_X2 "+x2"
+#else
+#  define VERUS_VAR_X2 ""
+#endif
+
+#define VERUS_VARIANT_NAME_RAW "baseline" VERUS_VAR_ZIPMIX VERUS_VAR_X2
 /* "baseline+zipmix" reads oddly, so strip the "baseline" prefix when any
  * variant flag is set. */
-#ifdef VERUS_ZIPMIX
+#if defined(VERUS_ZIPMIX) || defined(VERUS_X2)
 #  define VERUS_VARIANT_NAME (VERUS_VARIANT_NAME_RAW + 9)
 #else
 #  define VERUS_VARIANT_NAME VERUS_VARIANT_NAME_RAW

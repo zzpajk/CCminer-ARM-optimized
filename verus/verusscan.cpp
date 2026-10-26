@@ -27,6 +27,7 @@ extern "C"
 #include "haraka_portable.h"
 #include "haraka.h"
 }
+#include "verus_x2.h"
 
 enum
 {
@@ -266,6 +267,55 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 
 	throughput = 1;
 	const uint32_t Htarg = ptarget[7];
+#ifdef VERUS_X2
+	{
+		/* variant "x2": two nonces per iteration, each lane with its own key copy (see verus_x2.h). */
+		alignas(64) __m128i keyB[VERUS_KEY_SIZE128 + 8];
+		alignas(64) __m128i gpB[32], gpxB[32];
+		alignas(16) uint8_t halfB[64];
+		uint16_t fixrandB[32], fixrandexB[32];
+		memcpy(keyB, data_key, VERUS_KEY_SIZE128 * sizeof(__m128i));
+		memcpy(halfB, blockhash_half, 64);
+		struct verus_lane LA = { data_key, fixrand, fixrandex, data_key_prand, data_key_prandex, blockhash_half };
+		struct verus_lane LB = { keyB, fixrandB, fixrandexB, gpB, gpxB, halfB };
+		uint8_t nonceB[15];
+		uint32_t vh[2][8];
+		throughput = 2;
+		do {
+			*hashes_done = nonce_buf + throughput;
+			memcpy(nonceB, nonceSpace, 15);
+			((uint32_t *)(&nonceSpace[11]))[0] = nonce_buf;
+			((uint32_t *)(&nonceB[11]))[0] = nonce_buf + 1;
+			memset(vh, 0, sizeof(vh));
+
+			Verus2hash_x2((unsigned char *)vh[0], (unsigned char *)vh[1], &LA, &LB, nonceSpace, nonceB);
+
+			for (int lane = 0; lane < 2; lane++) {
+				if (vh[lane][7] <= Htarg) {
+					((uint32_t *)(&nonceSpace[11]))[0] = nonce_buf + lane;
+					memcpy(vhash, vh[lane], sizeof(vhash));
+					work->valid_nonces++;
+					memcpy(work->data, full_data, 140);
+					int nonce = work->valid_nonces - 1;
+					memcpy(work->extra, sol_data, 1347);
+					memcpy(work->extra + 1332, nonceSpace, 15);
+					bn_store_hash_target_ratio(vhash, work->target, work, nonce);
+					work->nonces[work->valid_nonces - 1] = ((uint32_t*)full_data)[NONCE_OFT];
+					goto out;
+				}
+			}
+			if ( __builtin_expect ( (uint64_t)throughput + (uint64_t)nonce_buf >= (uint64_t)max_nonce, 0) )
+				break;
+			nonce_buf += throughput;
+			if (opt_benchmark && (nonce_buf & 0x3FF) == 0) {
+				gettimeofday(&tv_now, NULL);
+				if ((int64_t)(tv_now.tv_sec - tv_start.tv_sec) * 1000000 + (tv_now.tv_usec - tv_start.tv_usec) >= 1000000)
+					break;
+			}
+		} while (!work_restart[thr_id].restart);
+		goto out;
+	}
+#endif
 	do {
 
 		*hashes_done = nonce_buf + throughput;
