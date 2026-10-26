@@ -60,9 +60,15 @@ static inline void Verus2hash_xN(unsigned char *const *hash, struct verus_lane *
 	for (int l = 0; l < N; l++) {
 		unsigned char *b = L[l].buf;
 		memcpy(b + 47, &im[l], 8); memcpy(b + 55, &im[l], 8); memcpy(b + 63, &im[l], 1);
+#ifndef VERUS_ABL_NOHARAKA
 		haraka512_keyed(hash[l], b, L[l].key + (im[l] & 511));
+#else
+		hash[l][28] = (unsigned char)im[l];   /* timing experiment only (tests/verus_ablate.cpp) */
+#endif
 	}
+#ifndef VERUS_ABL_NOFIX
 	for (int l = 0; l < N; l++) verus_fixkey_lane(&L[l]);
+#endif
 }
 
 #endif /* VERUS_X2 */

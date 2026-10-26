@@ -7,6 +7,9 @@
 #include <stdint.h>
 #include <time.h>
 #include "verus_clhash.h"
+#ifdef VERUS_X2
+#include "verus_x2.h"
+#endif
 extern "C" {
 #include "haraka.h"
 }
@@ -24,6 +27,25 @@ int main(int argc, char **argv)
 	unsigned char nonce[15] = {0};
 	uint64_t n = 0, sink = 0;
 	double t0 = now(), t1 = t0;
+#ifdef VERUS_X2
+	/* two-nonce path (variant x2), same lane code as the miner */
+	alignas(64) __m128i keyB[560], gpB[32], gpxB[32];
+	uint16_t frB[32], freB[32];
+	alignas(16) unsigned char bufB[64], hashB[32];
+	memcpy(keyB, key, sizeof(key)); memcpy(bufB, buf, 64);
+	struct verus_lane L[2] = { { key, fr, fre, gp, gpx, buf }, { keyB, frB, freB, gpB, gpxB, bufB } };
+	unsigned char nonceB[15] = {0};
+	unsigned char *hp[2] = { hash, hashB }; const unsigned char *np[2] = { nonce, nonceB };
+	while (t1 - t0 < secs) {
+		for (int k = 0; k < 128; k++, n += 2) {
+			uint64_t n1 = n + 1;
+			memcpy(nonce + 11, &n, 4); memcpy(nonceB + 11, &n1, 4);
+			Verus2hash_xN<2>(hp, L, np);
+			sink += hash[28] + hashB[28];
+		}
+		t1 = now();
+	}
+#else
 	while (t1 - t0 < secs) {
 		for (int k = 0; k < 256; k++, n++) {
 			memcpy(nonce + 11, &n, 4);
@@ -43,6 +65,7 @@ int main(int argc, char **argv)
 		}
 		t1 = now();
 	}
+#endif
 	printf("%.0f\n", n / (t1 - t0));
 	if (sink == 12345678901ULL) printf("x\n");
 	return 0;
