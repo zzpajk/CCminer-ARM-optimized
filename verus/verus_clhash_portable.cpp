@@ -1131,22 +1131,30 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
  * single-nonce loop; only the order of execution differs. */
 template<int N>
 void verusclhash_port2_2_xN(void **random, const unsigned char **buf, uint64_t keyMask,
-		uint16_t **fixrand, uint16_t **fixrandex, __m128i **g_prand, __m128i **g_prandex, uint64_t *out)
+		uint16_t **fixrand_in, uint16_t **fixrandex_in, __m128i **g_prand_in, __m128i **g_prandex_in, uint64_t *out)
 {
+	/* Copy the per-lane pointers into locals first: with -fno-strict-aliasing the compiler would otherwise
+	 * reload them from memory after every store through them. After full unrolling these become registers. */
 	__m128i *rs[N];
+	uint16_t * __restrict fr[N], * __restrict fre[N];
+	__m128i *gp[N], *gpx[N];
 	__m128i pc[N][4];
 	__m128i acc[N];
+#pragma clang loop unroll(full)
 	for (int l = 0; l < N; l++) {
 		const __m128i *a = (const __m128i *)buf[l];
 		rs[l] = (__m128i *)random[l];
+		fr[l] = fixrand_in[l]; fre[l] = fixrandex_in[l]; gp[l] = g_prand_in[l]; gpx[l] = g_prandex_in[l];
 		pc[l][0] = _mm_xor_si128(a[0], a[2]); pc[l][1] = _mm_xor_si128(a[1], a[3]); pc[l][2] = a[2]; pc[l][3] = a[3];
 		acc[l] = _mm_load_si128_emu(rs[l] + (keyMask + 2));
 	}
 	for (uint64_t i = 0; i < 32; i++)
 	{
+#pragma clang loop unroll(full)
 		for (int l = 0; l < N; l++)
-			verus_round_port2_2(acc[l], i, rs[l], pc[l], keyMask, fixrand[l], fixrandex[l], g_prand[l], g_prandex[l]);
+			verus_round_port2_2(acc[l], i, rs[l], pc[l], keyMask, fr[l], fre[l], gp[l], gpx[l]);
 	}
+#pragma clang loop unroll(full)
 	for (int l = 0; l < N; l++) {
 		acc[l] = _mm_xor_si128_emu(acc[l], _mm_cvtsi32_si128_emu(0x10000));
 		out[l] = precompReduction64_port(acc[l]);
