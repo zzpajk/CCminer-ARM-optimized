@@ -31,6 +31,8 @@
  *
  *   x2sel3     VERUS_X2 VERUS_SEL3   x2sel2 plus case 0x14 with no branch at all (8 masked steps)
  *
+ *   x2percore3 x2percore plus the fully branch-free case 0x14 on every out-of-order core
+ *
  * Variants are combined by defining more than one flag; the name then lists
  * them joined with '+'.
  */
@@ -54,7 +56,9 @@
 #  else
 #    define VERUS_VAR_LANES "+x4"
 #  endif
-#  if defined(VERUS_PERCORE)
+#  if defined(VERUS_PERCORE) && defined(VERUS_PERCORE3)
+#    define VERUS_VAR_FUSE "percore3"
+#  elif defined(VERUS_PERCORE)
 #    define VERUS_VAR_FUSE "percore"
 #  elif defined(VERUS_FUSE)
 #    define VERUS_VAR_FUSE "fuse"

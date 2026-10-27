@@ -1247,6 +1247,8 @@ template void verusclhash_port2_2_xN<2, 0>(void **, const unsigned char **, uint
 template void verusclhash_port2_2_xN<2, 1>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<2, 2>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<2, 3>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 4>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 5>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<2, 7>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<3, 0>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<4, 0>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);

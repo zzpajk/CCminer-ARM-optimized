@@ -248,6 +248,9 @@ static int verus_sel_for_cpu(int cpu)
 		if (g_impl[cpu] == 0x53) sel = (g_part[cpu] == 0x001) ? 0 : (g_part[cpu] == 0x004) ? 3 : 1;
 		else sel = 3;
 	}
+#ifdef VERUS_PERCORE3
+	sel |= 4;   /* x2percore3: also the fully branch-free case 0x14 on every out-of-order core */
+#endif
 	static int env = -2;
 	if (env == -2) { const char *e = getenv("VERUS_SEL"); env = (e && e[0] >= '0' && e[0] <= '7' && !e[1]) ? e[0] - '0' : -1; }
 	if (env >= 0) sel = env;
@@ -266,7 +269,7 @@ static int verus_lanes_for_this_core(int thr_id, int *sel)
 	*sel = (lanes > 1 && VERUS_LANES == 2) ? verus_sel_for_cpu(cpu) : 0;
 	static __thread int logged = 0;
 	if (!logged) { logged = 1; applog(LOG_INFO, "Verus thread %d on cpu %d: %d nonce(s) per step%s", thr_id, cpu, lanes,
-		lanes == 1 ? "" : (*sel == 7 ? ", sel3" : *sel == 3 ? ", sel2" : *sel == 1 ? ", sel" : *sel == 2 ? ", sel18" : "")); }
+		lanes == 1 ? "" : (*sel == 7 ? ", sel3" : *sel == 5 ? ", sel14+full14" : *sel == 4 ? ", full14" : *sel == 3 ? ", sel2" : *sel == 1 ? ", sel" : *sel == 2 ? ", sel18" : "")); }
 	return lanes;
 #else
 	(void)thr_id;
@@ -421,6 +424,8 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 			Htarg, vhash, data_key, fixrand, fixrandex, data_key_prand, data_key_prandex, blockhash_half, tv_start };
 		switch (sel) {
 		case 7:  verus_scan_lanes<7>(&c); break;
+		case 5:  verus_scan_lanes<5>(&c); break;
+		case 4:  verus_scan_lanes<4>(&c); break;
 		case 1:  verus_scan_lanes<1>(&c); break;
 		case 2:  verus_scan_lanes<2>(&c); break;
 		case 3:  verus_scan_lanes<3>(&c); break;
