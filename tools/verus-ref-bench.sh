@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# verus-ref-bench.sh v4.0 (Termux, or Ubuntu/Debian arm64 such as UserLAnd) - build named Verushash variants of Oink70/CCminer-ARM-optimized,
+# verus-ref-bench.sh v4.1 (Termux, or Ubuntu/Debian arm64 such as UserLAnd) - build named Verushash variants of Oink70/CCminer-ARM-optimized,
 # prove they match the baseline on THIS CPU, then benchmark them side by side.
 #
 # Variants (each prints its name in the miner banner):
@@ -18,6 +18,8 @@
 #   <variant>-pgo  the same code built with clang profile-guided optimisation: an instrumented build is
 #              trained on THIS phone for ~50 s (plain loop and the two-nonce paths), then rebuilt with the
 #              profile. Needs llvm-profdata (package llvm), installed with the other dependencies.
+#   <variant>-cNN  the same code built with clang NN (e.g. x2percorep-c15) from /usr/lib/llvm-NN, installed
+#              from the distribution if missing (clang-NN lld-NN llvm-NN). Combines: x2percorep-c15-pgo.
 #
 # In-order cores (plain loop under x2auto/x2percore): Cortex-A34/A35/A53/A55/A510/A520 and Qualcomm Kryo Silver.
 # Embedded patch = git diff 9ea69fd..4c7326e of github.com/zzpajk/CCminer-ARM-optimized (branch variants).
@@ -59,9 +61,10 @@ mkdir -p "$WORK" "$BIN"
 
 have() { command -v "$1" >/dev/null 2>&1; }
 prop() { have getprop && getprop "$1" 2>/dev/null; }
-vbase() { local b="${1%-pgo}"; echo "${b%%-t*}"; }
+vbase() { local b="${1%-pgo}"; b="${b%-c[0-9]*}"; echo "${b%%-t*}"; }
+vcc() { local b="${1%-pgo}"; case "$b" in *-c[0-9]*) echo "${b##*-c}";; *) echo "";; esac; }
 vpgo() { case "$1" in *-pgo) return 0;; esac; return 1; }
-vtune() { case "${1%-pgo}" in *-t55) echo "-mtune=cortex-a55";; *-t76) echo "-mtune=cortex-a76";; *-tgen) echo "GENERIC";; *) echo "";; esac; }
+vtune() { local b="${1%-pgo}"; case "${b%-c[0-9]*}" in *-t55) echo "-mtune=cortex-a55";; *-t76) echo "-mtune=cortex-a76";; *-tgen) echo "GENERIC";; *) echo "";; esac; }
 vflags() { case "$1" in baseline) echo "";; zipmix) echo "-DVERUS_ZIPMIX";; x2) echo "-DVERUS_X2";; x3) echo "-DVERUS_X2 -DVERUS_LANES=3";; x4) echo "-DVERUS_X2 -DVERUS_LANES=4";; x2auto) echo "-DVERUS_X2 -DVERUS_AUTO";; x2fuse) echo "-DVERUS_X2 -DVERUS_FUSE";; x2fuseauto) echo "-DVERUS_X2 -DVERUS_FUSE -DVERUS_AUTO";; x2sel) echo "-DVERUS_X2 -DVERUS_SEL14";; x2selauto) echo "-DVERUS_X2 -DVERUS_SEL14 -DVERUS_AUTO";; x2sel2) echo "-DVERUS_X2 -DVERUS_SEL14 -DVERUS_SEL18";; x2sel2auto) echo "-DVERUS_X2 -DVERUS_SEL14 -DVERUS_SEL18 -DVERUS_AUTO";; x2percore) echo "-DVERUS_X2 -DVERUS_AUTO -DVERUS_PERCORE";; pristine) echo "-DVERUS_PRISTINE";; x2percorep) echo "-DVERUS_X2 -DVERUS_AUTO -DVERUS_PERCORE -DVERUS_PRISTINE";; *) echo "UNKNOWN";; esac; }
 # name the variant prints in the banner (and that must be inside its binary)
 vmarker() { case "$1" in x2percorep) echo "x2percore+pristine";; *) echo "$1";; esac; }
@@ -103,6 +106,15 @@ elif have apt-get; then
 else
   echo "[1/6] Neither pkg nor apt-get found: install git, clang, lld, autotools and libcurl/jansson/openssl/zlib dev packages yourself."
 fi
+# compilers asked for with -cNN
+for v in $VARIANTS; do
+  nn=$(vcc "$v"); [ -z "$nn" ] && continue
+  if [ ! -x "/usr/lib/llvm-$nn/bin/clang" ] || [ ! -x "/usr/lib/llvm-$nn/bin/ld.lld" ]; then
+    echo "      installing clang-$nn lld-$nn llvm-$nn for variant $v ..."
+    if have apt-get; then $SUDO apt-get -o DPkg::Lock::Timeout=600 install -y "clang-$nn" "lld-$nn" "llvm-$nn" 2>&1 | tail -2; fi
+  fi
+  [ -x "/usr/lib/llvm-$nn/bin/clang" ] || echo "      !! clang-$nn not available here; variant $v will be skipped"
+done
 # Fail early and clearly if something is still missing.
 MISSING=""
 for c in git clang clang++ ld.lld make autoconf automake pkg-config; do have "$c" || MISSING="$MISSING $c"; done
@@ -137,14 +149,17 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
   # of its flags ("unknown argument") and then configure fails with "C compiler cannot create executables".
   # Probe each flag with the installed compiler/linker and drop the ones it rejects. Every variant gets the same
   # flags on a given device, so comparisons stay fair; the removed flags are listed in the report.
-  RMF=""
-  probe() { clang -x c "$WORK/probe.c" "$@" -o "$WORK/probe.out" >/dev/null 2>&1; }
-  probe -ffinite-loops || RMF="$RMF|-ffinite-loops"
-  probe -mfix-cortex-a53-835769 || RMF="$RMF|-mfix-cortex-a53-835769"
-  probe -mllvm -enable-loop-distribute || RMF="$RMF|-mllvm -enable-loop-distribute"
-  if ! probe -O3 -flto -fuse-ld=lld; then RMF="$RMF|-flto|-fuse-ld=lld|-Wl,-hugetlbfs-align"
-  elif ! probe -fuse-ld=lld -Wl,-hugetlbfs-align; then RMF="$RMF|-Wl,-hugetlbfs-align"; fi
-  RMF=${RMF#|}
+  rmf_for() { # compiler -> the configure.sh flags it rejects, '|'-separated
+    local r=""
+    probe() { "$1" -x c "$WORK/probe.c" "${@:2}" -o "$WORK/probe.out" >/dev/null 2>&1; }
+    probe "$1" -ffinite-loops || r="$r|-ffinite-loops"
+    probe "$1" -mfix-cortex-a53-835769 || r="$r|-mfix-cortex-a53-835769"
+    probe "$1" -mllvm -enable-loop-distribute || r="$r|-mllvm -enable-loop-distribute"
+    if ! probe "$1" -O3 -flto -fuse-ld=lld; then r="$r|-flto|-fuse-ld=lld|-Wl,-hugetlbfs-align"
+    elif ! probe "$1" -fuse-ld=lld -Wl,-hugetlbfs-align; then r="$r|-Wl,-hugetlbfs-align"; fi
+    echo "${r#|}"
+  }
+  RMF=$(rmf_for clang)
   [ -n "$RMF" ] && echo "  note: this clang/linker rejects: $(echo "$RMF" | tr '|' ' ') -> building without them"
   echo "[3/6] Building variants: $VARIANTS ($JOBS compile jobs)"
   for v in $VARIANTS; do
@@ -156,18 +171,26 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
     # (a prebuilt ccminer and *.o files). Regenerating with autogen fails on current autoconf, and is
     # not needed, so use the shipped configure as-is but delete every old build product first so nothing
     # stale is linked. configure.sh is upstream's own flag set (clang, lld, -mtune=cortex-a53).
+    nn=$(vcc "$v"); CCD=""
+    if [ -n "$nn" ]; then
+      CCD="/usr/lib/llvm-$nn/bin"
+      [ -x "$CCD/clang" ] || { echo "    skipped: clang-$nn not installed"; VARIANTS=$(echo " $VARIANTS " | sed "s# $v # #; s#^ ##; s# \$##"); continue; }
+      echo "    compiler: $("$CCD/clang" --version | head -1)"
+    fi
     bld() { # dir extra-compiler-and-linker-flags
+      local R="$RMF"; [ -n "$CCD" ] && R=$(rmf_for "$CCD/clang")
       rm -rf "$1"; cp -r "$WORK/src-orig" "$1"
       ( cd "$1" && find . -name '*.o' -delete && rm -f ccminer *.opt.yaml config.status && \
-          { if [ -n "$RMF" ]; then echo "$RMF" | tr '|' '\n' | while IFS= read -r f; do sed -i "s# $f##g" configure.sh; done; fi; true; } && \
+          { if [ -n "$CCD" ]; then sed -i "s#CXX=clang++ CC=clang#CXX=$CCD/clang++ CC=$CCD/clang#" configure.sh; fi; true; } && \
+          { if [ -n "$R" ]; then echo "$R" | tr '|' '\n' | while IFS= read -r f; do sed -i "s# $f##g" configure.sh; done; fi; true; } && \
           { if [ "$tn" = GENERIC ]; then sed -i 's# -mtune=cortex-a53##g' configure.sh; elif [ -n "$tn" ]; then sed -i "s#-mtune=cortex-a53#$tn#g" configure.sh; fi; true; } && \
           { if [ -n "$2" ]; then sed -i "s#^extracflags=\"#extracflags=\"$2 #" configure.sh && sed -i "s#LDFLAGS=\"-v -flto#LDFLAGS=\"-v -flto $2#" configure.sh; fi; true; } && \
           ./configure.sh && make -j"$JOBS" CPPFLAGS="$fl" ) >>"$BUILDLOG" 2>&1
     }
     if vpgo "$v"; then
       PROFDATA=""
-      cm=$(clang --version 2>/dev/null | grep -o 'version [0-9]*' | head -1 | awk '{print $2}')
-      for c in llvm-profdata "llvm-profdata-$cm" "/usr/lib/llvm-$cm/bin/llvm-profdata"; do have "$c" && { PROFDATA="$c"; break; }; [ -x "$c" ] && { PROFDATA="$c"; break; }; done
+      cm=$("${CCD:+$CCD/}clang" --version 2>/dev/null | grep -o 'version [0-9]*' | head -1 | awk '{print $2}')
+      for c in ${CCD:+"$CCD/llvm-profdata"} llvm-profdata "llvm-profdata-$cm" "/usr/lib/llvm-$cm/bin/llvm-profdata"; do have "$c" && { PROFDATA="$c"; break; }; [ -x "$c" ] && { PROFDATA="$c"; break; }; done
       [ -z "$PROFDATA" ] && { echo "  !! $v: llvm-profdata not found (install the llvm package); skipping this variant"; VARIANTS=$(echo " $VARIANTS " | sed "s# $v # #; s#^ ##; s# \$##"); continue; }
       echo "    instrumented build, then training on this phone (~50 s)..."
       bld "$d-inst" "-fprofile-instr-generate"
