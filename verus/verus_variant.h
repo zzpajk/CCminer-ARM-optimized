@@ -26,8 +26,8 @@
  *   x2sel2     x2sel plus the same for case 0x18 (divide/clmul), at the price of a divide per iteration
  *
  *   x2percore  VERUS_X2 VERUS_AUTO VERUS_PERCORE  per core at run time: plain loop on in-order cores,
- *                            x2 on Mongoose M1/M2, x2sel2 on M5 and ARM big cores, x2sel on other
- *                            Mongoose; VERUS_SEL=0..3 overrides for testing
+ *                            x2 on Mongoose M1/M2, x2sel on M3, x2sel2 on M4/M5 and ARM big cores;
+ *                            VERUS_SEL=0..3 overrides for testing
  *
  *   x2sel3     VERUS_X2 VERUS_SEL3   x2sel2 plus case 0x14 with no branch at all (8 masked steps)
  *
