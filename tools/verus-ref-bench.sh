@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# verus-ref-bench.sh v3.7 (Termux, or Ubuntu/Debian arm64 such as UserLAnd) - build named Verushash variants of Oink70/CCminer-ARM-optimized,
+# verus-ref-bench.sh v3.7.1 (Termux, or Ubuntu/Debian arm64 such as UserLAnd) - build named Verushash variants of Oink70/CCminer-ARM-optimized,
 # prove they match the baseline on THIS CPU, then benchmark them side by side.
 #
 # Variants (each prints its name in the miner banner):
@@ -92,8 +92,9 @@ if have pkg && [ -d /data/data/com.termux ]; then
       libcurl libjansson openssl zlib binutils libomp 2>&1 | tail -3
 elif have apt-get; then
   echo "[1/6] Installing build dependencies (apt; may ask for your sudo password)..."
-  $SUDO apt-get update -qq 2>&1 | tail -2
-  $SUDO apt-get install -y git clang lld make autoconf automake libtool pkg-config binutils \
+  # wait up to 10 minutes if another apt/dpkg holds the lock (e.g. an install someone started by hand)
+  $SUDO apt-get -o DPkg::Lock::Timeout=600 update -qq 2>&1 | tail -2
+  $SUDO apt-get -o DPkg::Lock::Timeout=600 install -y git clang lld make autoconf automake libtool pkg-config binutils \
       libcurl4-openssl-dev libjansson-dev libssl-dev zlib1g-dev 2>&1 | tail -3
 else
   echo "[1/6] Neither pkg nor apt-get found: install git, clang, lld, autotools and libcurl/jansson/openssl/zlib dev packages yourself."
