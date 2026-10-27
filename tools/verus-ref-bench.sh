@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# verus-ref-bench.sh v3.9 (Termux, or Ubuntu/Debian arm64 such as UserLAnd) - build named Verushash variants of Oink70/CCminer-ARM-optimized,
+# verus-ref-bench.sh v4.0 (Termux, or Ubuntu/Debian arm64 such as UserLAnd) - build named Verushash variants of Oink70/CCminer-ARM-optimized,
 # prove they match the baseline on THIS CPU, then benchmark them side by side.
 #
 # Variants (each prints its name in the miner banner):
@@ -15,6 +15,9 @@
 #              out-of-order core. VERUS_SEL=0|1|3 in the environment forces one choice (testing).
 #   pristine   plain loop without the per-round key journal; the key is restored from a pristine copy (aimed at A53/A55)
 #   x2percorep x2percore + pristine (the plain loop that in-order cores run under x2percore uses pristine)
+#   <variant>-pgo  the same code built with clang profile-guided optimisation: an instrumented build is
+#              trained on THIS phone for ~50 s (plain loop and the two-nonce paths), then rebuilt with the
+#              profile. Needs llvm-profdata (package llvm), installed with the other dependencies.
 #
 # In-order cores (plain loop under x2auto/x2percore): Cortex-A34/A35/A53/A55/A510/A520 and Qualcomm Kryo Silver.
 # Embedded patch = git diff 9ea69fd..4c7326e of github.com/zzpajk/CCminer-ARM-optimized (branch variants).
@@ -24,7 +27,7 @@
 # --cpu-affinity.) Note upstream's default pins thread i to core i, so plain "-t 4" runs on cores 0-3.
 #
 # Usage: bash verus-ref-bench.sh [-d SECONDS] [-c COOLDOWN] [-r ROUNDS] [-t "1 4 8"]
-#                                [-v "baseline x2auto x2percore x2percorep"] [--skip-build] [--report-only]
+#                                [-v "baseline x2percorep x2percorep-pgo"] [--skip-build] [--report-only]
 #   -d  seconds per benchmark run (30)   -c  cooldown between runs (10)
 #   -r  rounds; variants alternate each round to cancel thermal drift (2)
 #   -t  thread counts, UNPINNED (default: automatic plan, one pinned run per core type, see below)
@@ -38,7 +41,7 @@
 # No root needed. The report holds device model, SoC, CPU features and hashrates only.
 
 set -u
-DUR=20; COOL=8; ROUNDS=1; THREADS=""; VARIANTS="baseline x2auto x2percore x2percorep"; SKIP_BUILD=0; REPORT_ONLY=0; JOBS=""; ABLATE=1; SWEEP=0
+DUR=20; COOL=8; ROUNDS=1; THREADS=""; VARIANTS="baseline x2percorep x2percorep-pgo"; SKIP_BUILD=0; REPORT_ONLY=0; JOBS=""; ABLATE=1; SWEEP=0
 while [ $# -gt 0 ]; do
   case "$1" in
     -d) DUR="$2"; shift 2;; -c) COOL="$2"; shift 2;; -r) ROUNDS="$2"; shift 2;;
@@ -56,8 +59,9 @@ mkdir -p "$WORK" "$BIN"
 
 have() { command -v "$1" >/dev/null 2>&1; }
 prop() { have getprop && getprop "$1" 2>/dev/null; }
-vbase() { echo "${1%%-t*}"; }
-vtune() { case "$1" in *-t55) echo "-mtune=cortex-a55";; *-t76) echo "-mtune=cortex-a76";; *-tgen) echo "GENERIC";; *) echo "";; esac; }
+vbase() { local b="${1%-pgo}"; echo "${b%%-t*}"; }
+vpgo() { case "$1" in *-pgo) return 0;; esac; return 1; }
+vtune() { case "${1%-pgo}" in *-t55) echo "-mtune=cortex-a55";; *-t76) echo "-mtune=cortex-a76";; *-tgen) echo "GENERIC";; *) echo "";; esac; }
 vflags() { case "$1" in baseline) echo "";; zipmix) echo "-DVERUS_ZIPMIX";; x2) echo "-DVERUS_X2";; x3) echo "-DVERUS_X2 -DVERUS_LANES=3";; x4) echo "-DVERUS_X2 -DVERUS_LANES=4";; x2auto) echo "-DVERUS_X2 -DVERUS_AUTO";; x2fuse) echo "-DVERUS_X2 -DVERUS_FUSE";; x2fuseauto) echo "-DVERUS_X2 -DVERUS_FUSE -DVERUS_AUTO";; x2sel) echo "-DVERUS_X2 -DVERUS_SEL14";; x2selauto) echo "-DVERUS_X2 -DVERUS_SEL14 -DVERUS_AUTO";; x2sel2) echo "-DVERUS_X2 -DVERUS_SEL14 -DVERUS_SEL18";; x2sel2auto) echo "-DVERUS_X2 -DVERUS_SEL14 -DVERUS_SEL18 -DVERUS_AUTO";; x2percore) echo "-DVERUS_X2 -DVERUS_AUTO -DVERUS_PERCORE";; pristine) echo "-DVERUS_PRISTINE";; x2percorep) echo "-DVERUS_X2 -DVERUS_AUTO -DVERUS_PERCORE -DVERUS_PRISTINE";; *) echo "UNKNOWN";; esac; }
 # name the variant prints in the banner (and that must be inside its binary)
 vmarker() { case "$1" in x2percorep) echo "x2percore+pristine";; *) echo "$1";; esac; }
@@ -94,7 +98,7 @@ elif have apt-get; then
   echo "[1/6] Installing build dependencies (apt; may ask for your sudo password)..."
   # wait up to 10 minutes if another apt/dpkg holds the lock (e.g. an install someone started by hand)
   $SUDO apt-get -o DPkg::Lock::Timeout=600 update -qq 2>&1 | tail -2
-  $SUDO apt-get -o DPkg::Lock::Timeout=600 install -y git clang lld make autoconf automake libtool pkg-config binutils \
+  $SUDO apt-get -o DPkg::Lock::Timeout=600 install -y git clang lld llvm make autoconf automake libtool pkg-config binutils \
       libcurl4-openssl-dev libjansson-dev libssl-dev zlib1g-dev 2>&1 | tail -3
 else
   echo "[1/6] Neither pkg nor apt-get found: install git, clang, lld, autotools and libcurl/jansson/openssl/zlib dev packages yourself."
@@ -146,16 +150,39 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
   for v in $VARIANTS; do
     vb=$(vbase "$v"); tn=$(vtune "$v")
     fl=$(vflags "$vb"); [ "$fl" = "UNKNOWN" ] && { echo "unknown variant $v"; exit 1; }
-    d="$WORK/build-$v"; rm -rf "$d"; cp -r "$WORK/src-orig" "$d"
+    d="$WORK/build-$v"
     echo "  - $v ${fl:+($fl)} ${tn:+[tune: $tn]}"
     # The upstream tree ships generated build files (configure, Makefile.in) AND stale build products
     # (a prebuilt ccminer and *.o files). Regenerating with autogen fails on current autoconf, and is
     # not needed, so use the shipped configure as-is but delete every old build product first so nothing
     # stale is linked. configure.sh is upstream's own flag set (clang, lld, -mtune=cortex-a53).
-    ( cd "$d" && find . -name '*.o' -delete && rm -f ccminer *.opt.yaml config.status && \
-        { if [ -n "$RMF" ]; then echo "$RMF" | tr '|' '\n' | while IFS= read -r f; do sed -i "s# $f##g" configure.sh; done; fi; true; } && \
-        { if [ "$tn" = GENERIC ]; then sed -i 's# -mtune=cortex-a53##g' configure.sh; elif [ -n "$tn" ]; then sed -i "s#-mtune=cortex-a53#$tn#g" configure.sh; fi; true; } && \
-        ./configure.sh && make -j"$JOBS" CPPFLAGS="$fl" ) >>"$BUILDLOG" 2>&1
+    bld() { # dir extra-compiler-and-linker-flags
+      rm -rf "$1"; cp -r "$WORK/src-orig" "$1"
+      ( cd "$1" && find . -name '*.o' -delete && rm -f ccminer *.opt.yaml config.status && \
+          { if [ -n "$RMF" ]; then echo "$RMF" | tr '|' '\n' | while IFS= read -r f; do sed -i "s# $f##g" configure.sh; done; fi; true; } && \
+          { if [ "$tn" = GENERIC ]; then sed -i 's# -mtune=cortex-a53##g' configure.sh; elif [ -n "$tn" ]; then sed -i "s#-mtune=cortex-a53#$tn#g" configure.sh; fi; true; } && \
+          { if [ -n "$2" ]; then sed -i "s#^extracflags=\"#extracflags=\"$2 #" configure.sh && sed -i "s#LDFLAGS=\"-v -flto#LDFLAGS=\"-v -flto $2#" configure.sh; fi; true; } && \
+          ./configure.sh && make -j"$JOBS" CPPFLAGS="$fl" ) >>"$BUILDLOG" 2>&1
+    }
+    if vpgo "$v"; then
+      PROFDATA=""
+      cm=$(clang --version 2>/dev/null | grep -o 'version [0-9]*' | head -1 | awk '{print $2}')
+      for c in llvm-profdata "llvm-profdata-$cm" "/usr/lib/llvm-$cm/bin/llvm-profdata"; do have "$c" && { PROFDATA="$c"; break; }; [ -x "$c" ] && { PROFDATA="$c"; break; }; done
+      [ -z "$PROFDATA" ] && { echo "  !! $v: llvm-profdata not found (install the llvm package); skipping this variant"; VARIANTS=$(echo " $VARIANTS " | sed "s# $v # #; s#^ ##; s# \$##"); continue; }
+      echo "    instrumented build, then training on this phone (~50 s)..."
+      bld "$d-inst" "-fprofile-instr-generate"
+      [ -x "$d-inst/ccminer" ] || { echo "BUILD FAILED for $v (instrumented). Last lines of $BUILDLOG:"; tail -25 "$BUILDLOG"; exit 1; }
+      PD="$d-prof"; rm -rf "$PD"; mkdir -p "$PD"
+      # cover every hashing path: plain loop, two-nonce x2 / sel / sel2 (env overrides of the auto variants)
+      for e in "VERUS_LANES=1:15" "VERUS_LANES=2 VERUS_SEL=0:12" "VERUS_LANES=2 VERUS_SEL=1:8" "VERUS_LANES=2 VERUS_SEL=3:12"; do
+        env ${e%:*} LLVM_PROFILE_FILE="$PD/%p.profraw" "$d-inst/ccminer" -a verus --benchmark -t 1 --time-limit "${e##*:}" --no-color >/dev/null 2>&1 </dev/null
+      done
+      "$PROFDATA" merge -o "$PD/verus.profdata" "$PD"/*.profraw >>"$BUILDLOG" 2>&1 || { echo "  !! $v: profile merge failed, see $BUILDLOG"; exit 1; }
+      echo "    profile: $(ls "$PD"/*.profraw | wc -l) runs merged with $PROFDATA; optimised build..."
+      bld "$d" "-fprofile-use=$PD/verus.profdata -Wno-profile-instr-unprofiled -Wno-profile-instr-out-of-date -Wno-backend-plugin"
+    else
+      bld "$d" ""
+    fi
     if [ -x "$d/ccminer" ] && [ "$d/ccminer" -nt "$d/verus/verus_variant.h" ]; then
       # Prove the right code was linked: the variant name literal must be in the binary.
       case "$vb" in
@@ -175,6 +202,7 @@ DT_RESULTS=""
 SRC="$WORK/src-orig"
 for v in $VARIANTS; do
   vb=$(vbase "$v"); [ "$vb" = "baseline" ] && continue
+  vpgo "$v" && continue   # same source as the variant without -pgo, tested there
   fl=$(vflags "$vb"); T="$WORK/dt-$v"; rm -rf "$T"; mkdir -p "$T"
   case "$fl" in *VERUS_PRISTINE*)
     # pristine restore vs the original journal + FixKey, key kept across 1000 nonces at a time
