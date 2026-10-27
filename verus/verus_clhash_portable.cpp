@@ -326,7 +326,11 @@ uint8x16_t _mm_aesenc_si128 (uint8x16_t a, uint8x16_t RoundKey)
 
 
 // verus intermediate hash extra
-__m128i __verusclmulwithoutreduction64alignedrepeat_port2_2(__m128i *randomsource, const __m128i buf[4], uint64_t keyMask, uint16_t * __restrict fixrand, 
+/* JOURNAL = true: the original code, which saves the old value of both key positions every round so
+ * FixKey() can undo the mutations afterwards. JOURNAL = false (variant "pristine"): no saves; the caller
+ * restores the touched positions from a pristine copy of the key instead (64 fewer vector stores per hash). */
+template<bool JOURNAL>
+FORCE_INLINE __m128i verusclmul_repeat_port2_2_t(__m128i *randomsource, const __m128i buf[4], uint64_t keyMask, uint16_t * __restrict fixrand, 
 										uint16_t * __restrict fixrandex, __m128i *g_prand, __m128i *g_prandex)
 {
 	__m128i const *pbuf, *pbsf;
@@ -358,8 +362,10 @@ __m128i __verusclmulwithoutreduction64alignedrepeat_port2_2(__m128i *randomsourc
 		fixrandex[i] = (uint16_t) ((selector >>32) & keyMask);
 		__m128i *prand = randomsource + fixrand[i];
 		__m128i *prandex = randomsource + fixrandex[i];
-		g_prand[i] = *prand;
-		g_prandex[i] = *prandex;
+		if (JOURNAL) {
+			g_prand[i] = *prand;
+			g_prandex[i] = *prandex;
+		}
 
 
 
@@ -727,6 +733,12 @@ __m128i __verusclmulwithoutreduction64alignedrepeat_port2_2(__m128i *randomsourc
    
 	}
 	return acc;
+}
+
+__m128i __verusclmulwithoutreduction64alignedrepeat_port2_2(__m128i *randomsource, const __m128i buf[4], uint64_t keyMask, uint16_t * __restrict fixrand, 
+										uint16_t * __restrict fixrandex, __m128i *g_prand, __m128i *g_prandex)
+{
+	return verusclmul_repeat_port2_2_t<true>(randomsource, buf, keyMask, fixrand, fixrandex, g_prand, g_prandex);
 }
 
 #ifdef VERUS_STATS
@@ -3303,6 +3315,15 @@ uint64_t verusclhash_port2_2(void * random, const unsigned char buf[64], uint64_
 
     __m128i  acc = __verusclmulwithoutreduction64alignedrepeat_port2_2(rs64, string, keyMask, fixrand, fixrandex, g_prand, g_prandex);
     //acc = _mm_xor_si128_emu(acc, lazyLengthHash_port(1024, 64));
+    acc = _mm_xor_si128_emu(acc, _mm_cvtsi32_si128_emu(0x10000));
+    return precompReduction64_port(acc);
+}
+
+/* variant "pristine": like verusclhash_port2_2 but saves nothing; the caller restores the key positions
+ * listed in fixrand/fixrandex from a pristine copy of the key (verus_fixkey_pristine in verus_clhash.h). */
+uint64_t verusclhash_port2_2_nojournal(void * random, const unsigned char buf[64], uint64_t keyMask, uint16_t *  __restrict fixrand,
+		uint16_t * __restrict fixrandex) {
+    __m128i  acc = verusclmul_repeat_port2_2_t<false>((__m128i *)random, (const __m128i *)buf, keyMask, fixrand, fixrandex, 0, 0);
     acc = _mm_xor_si128_emu(acc, _mm_cvtsi32_si128_emu(0x10000));
     return precompReduction64_port(acc);
 }

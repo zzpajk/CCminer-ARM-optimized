@@ -1,6 +1,7 @@
 /* Timing harness for the ablation builds: single-nonce Verus pipeline (same sequence as Verus2hash() +
  * FixKey()) on a fixed key, nonce counting up, for a fixed number of seconds. Prints hashes per second.
- * With -DVERUS_ABL_NOFIX the key restore is skipped (also wrong on purpose, for timing only). */
+ * With -DVERUS_ABL_NOFIX the key restore is skipped (also wrong on purpose, for timing only).
+ * With -DVERUS_PRISTINE it times variant "pristine" (no journal, restore from a pristine key copy; correct hashes). */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -24,6 +25,10 @@ int main(int argc, char **argv)
 	alignas(16) unsigned char buf[64], hash[32];
 	for (size_t i = 0; i < sizeof(key); i++) ((unsigned char *)key)[i] = (unsigned char)rnd();
 	for (int i = 0; i < 64; i++) buf[i] = (unsigned char)rnd();
+#ifdef VERUS_PRISTINE
+	alignas(64) __m128i pristine[560];
+	memcpy(pristine, key, sizeof(key));
+#endif
 	unsigned char nonce[15] = {0};
 	uint64_t n = 0, sink = 0;
 	double t0 = now(), t1 = t0;
@@ -51,7 +56,11 @@ int main(int argc, char **argv)
 			memcpy(nonce + 11, &n, 4);
 			memcpy(buf + 47, buf, 16); memcpy(buf + 63, buf, 1);
 			memcpy(buf + 32, nonce, 15);
+#ifdef VERUS_PRISTINE
+			uint64_t im = verusclhash_port2_2_nojournal(key, buf, 511, fr, fre);
+#else
 			uint64_t im = verusclhash_port2_2(key, buf, 511, fr, fre, gp, gpx);
+#endif
 			memcpy(buf + 47, &im, 8); memcpy(buf + 55, &im, 8); memcpy(buf + 63, &im, 1);
 #ifndef VERUS_ABL_NOHARAKA
 			haraka512_keyed(hash, buf, key + (im & 511));
@@ -59,7 +68,9 @@ int main(int argc, char **argv)
 			hash[28] = (unsigned char)im;   /* timing experiment only */
 #endif
 			sink += hash[28];
-#ifndef VERUS_ABL_NOFIX
+#if defined(VERUS_PRISTINE) && !defined(VERUS_ABL_NOFIX)
+			verus_fixkey_pristine(fr, fre, key, pristine);
+#elif !defined(VERUS_ABL_NOFIX)
 			for (int i = 31; i > -1; i--) { key[fr[i]] = gp[i]; key[fre[i]] = gpx[i]; }
 #endif
 		}

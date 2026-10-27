@@ -22,6 +22,17 @@
 #include "sse2neon.h"
 uint64_t verusclhash_port2_1(void * random, const unsigned char buf[64], uint64_t keyMask, uint16_t *  __restrict fixrand, uint16_t * __restrict fixrandex);
 uint64_t verusclhash_port2_2(void * random, const unsigned char buf[64], uint64_t keyMask, uint16_t *  __restrict fixrand, uint16_t * __restrict fixrandex, __m128i *g_prand, __m128i *g_prandex);
+uint64_t verusclhash_port2_2_nojournal(void * random, const unsigned char buf[64], uint64_t keyMask, uint16_t *  __restrict fixrand, uint16_t * __restrict fixrandex);
+/* variant "pristine": undo one hash's key mutations by copying the touched positions back from an
+ * unmodified copy of the key. Order does not matter (every touched position gets its original value). */
+static inline void verus_fixkey_pristine(const uint16_t * __restrict fixrand, const uint16_t * __restrict fixrandex,
+		__m128i * __restrict key, const __m128i * __restrict pristine)
+{
+	for (int i = 0; i < 32; i++) {
+		key[fixrand[i]] = pristine[fixrand[i]];
+		key[fixrandex[i]] = pristine[fixrandex[i]];
+	}
+}
 
 #ifdef VERUS_X2
 /* N independent nonces in lockstep (N = 2, 3 or 4); each lane needs its own copy of the key */

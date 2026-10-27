@@ -198,6 +198,24 @@ extern "C" void Verus2hash(unsigned char *hash, unsigned char *curBuf, unsigned 
 	//__builtin_prefetch(&data_key_master[272],0,3);
 	FixKey(fixrand, fixrandex, data_key, g_prand, g_prandex);
 }
+#ifdef VERUS_PRISTINE
+/* variant "pristine" (plain single-nonce loop only): no per-round journal of the old key values; the
+ * touched positions are copied back from a pristine copy of the key made once per scan call. */
+static inline void Verus2hash_pristine(unsigned char *hash, unsigned char *curBuf, unsigned char *nonce,
+        __m128i * __restrict data_key, const __m128i * __restrict pristine, uint16_t * __restrict fixrand, uint16_t * __restrict fixrandex)
+{
+	memcpy(curBuf + 47, curBuf, 16);
+	memcpy(curBuf + 63, curBuf, 1);
+	memcpy(curBuf + 32, nonce, 15);
+	uint64_t intermediate = verusclhash_port2_2_nojournal(data_key, curBuf, 511, fixrand, fixrandex);
+	memcpy(curBuf + 47, &intermediate, 8);
+	memcpy(curBuf + 55, &intermediate, 8);
+	memcpy(curBuf + 63, &intermediate, 1);
+	haraka512_keyed(hash, curBuf, data_key + (intermediate & 511));
+	verus_fixkey_pristine(fixrand, fixrandex, data_key, pristine);
+}
+#endif
+
 #ifdef _WIN32
 
 #define posix_memalign(p, a, s) (((*(p)) = _aligned_malloc((s), (a))), *(p) ?0 :errno)
@@ -266,6 +284,11 @@ static int verus_lanes_for_this_core(int thr_id, int *sel)
 	static bool once = (verus_scan_cpuinfo(), true); (void)once;
 	int cpu = sched_getcpu();
 	int lanes = (cpu >= 0 && cpu < 1024 && g_inorder[cpu]) ? 1 : VERUS_LANES;
+	/* testing aid: VERUS_LANES=1 forces the plain single-nonce loop on every core, VERUS_LANES=N (the
+	 * compiled lane count) forces the multi-nonce loop on every core, in-order ones included */
+	static int envl = -2;
+	if (envl == -2) { const char *e = getenv("VERUS_LANES"); envl = (e && (e[0] == '1' || e[0] - '0' == VERUS_LANES) && !e[1]) ? e[0] - '0' : -1; }
+	if (envl > 0) lanes = envl;
 	*sel = (lanes > 1 && VERUS_LANES == 2) ? verus_sel_for_cpu(cpu) : 0;
 	static __thread int logged = 0;
 	if (!logged) { logged = 1; applog(LOG_INFO, "Verus thread %d on cpu %d: %d nonce(s) per step%s", thr_id, cpu, lanes,
@@ -404,6 +427,10 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 
 	VerusHashHalf(blockhash_half, (unsigned char*)full_data, 1487);
 	GenNewCLKey((unsigned char*)blockhash_half, data_key);  //data_key a global static 2D array data_key[16][8832];
+#ifdef VERUS_PRISTINE
+	__m128i pristine_key[VERUS_KEY_SIZE128] __attribute__ ((aligned(64)));
+	memcpy(pristine_key, data_key, sizeof(pristine_key));
+#endif
 
 	//__builtin_prefetch(&fixrand[0],1,3);
 	//__builtin_prefetch(&fixrand[15],1,3);
@@ -441,8 +468,13 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 
 		((uint32_t *)(&nonceSpace[11]))[0] = nonce_buf;
 
+#ifdef VERUS_PRISTINE
+		Verus2hash_pristine((unsigned char *)vhash, (unsigned char *)blockhash_half, nonceSpace, data_key,
+				pristine_key, fixrand, fixrandex);
+#else
 		Verus2hash((unsigned char *)vhash, (unsigned char *)blockhash_half, nonceSpace, data_key,
 				&gpuinit, fixrand, fixrandex , data_key_prand, data_key_prandex, version);
+#endif
 
 		if (  vhash[7] <= Htarg )
 		{

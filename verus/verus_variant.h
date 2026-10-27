@@ -33,6 +33,10 @@
  *
  *   x2percore3 x2percore plus the fully branch-free case 0x14 on every out-of-order core
  *
+ *   pristine   VERUS_PRISTINE  plain single-nonce loop (the one in-order cores use) without the per-round
+ *                            journal of old key values; the key is restored from a pristine copy instead.
+ *                            Combines with the others: x2percore + VERUS_PRISTINE = "x2percore+pristine"
+ *
  * Variants are combined by defining more than one flag; the name then lists
  * them joined with '+'.
  */
@@ -80,10 +84,16 @@
 #  define VERUS_VAR_X2 ""
 #endif
 
-#define VERUS_VARIANT_NAME_RAW "baseline" VERUS_VAR_ZIPMIX VERUS_VAR_X2
+#ifdef VERUS_PRISTINE
+#  define VERUS_VAR_PRISTINE "+pristine"
+#else
+#  define VERUS_VAR_PRISTINE ""
+#endif
+
+#define VERUS_VARIANT_NAME_RAW "baseline" VERUS_VAR_ZIPMIX VERUS_VAR_X2 VERUS_VAR_PRISTINE
 /* "baseline+zipmix" reads oddly, so strip the "baseline" prefix when any
  * variant flag is set. */
-#if defined(VERUS_ZIPMIX) || defined(VERUS_X2)
+#if defined(VERUS_ZIPMIX) || defined(VERUS_X2) || defined(VERUS_PRISTINE)
 #  define VERUS_VARIANT_NAME (VERUS_VARIANT_NAME_RAW + 9)
 #else
 #  define VERUS_VARIANT_NAME VERUS_VARIANT_NAME_RAW
