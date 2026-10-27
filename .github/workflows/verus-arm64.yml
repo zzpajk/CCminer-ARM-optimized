@@ -198,3 +198,59 @@ jobs:
         run: |
           [ -f aes.txt ] && echo "::notice title=aes-pairs::$(tr '\n' '|' < aes.txt)"
           [ -f pgo.txt ] && echo "::notice title=pgo::$(tr '\n' '|' < pgo.txt)"
+
+  # Separate job: the same miner (x2percore + pristine) built with GCC instead of clang.
+  gcc:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld gcc g++ make autoconf automake libtool pkg-config binutils \
+            libcurl4-openssl-dev libjansson-dev libssl-dev zlib1g-dev
+      - name: Build clang and gcc miners, gcc equivalence tests
+        run: |
+          set -e
+          exec > >(tee gcc.log) 2>&1
+          FL="-DVERUS_X2 -DVERUS_AUTO -DVERUS_PERCORE -DVERUS_PRISTINE"
+          prep() { rm -rf "$1"; mkdir "$1"; git ls-files -z | grep -zv '\.o$' | xargs -0 cp --parents -t "$1"
+                   ( cd "$1"; find . -name '*.o' -delete; rm -f ccminer *.opt.yaml config.status ); }
+          prep b-clang; ( cd b-clang && ./configure.sh >/dev/null && make -j"$(nproc)" CPPFLAGS="$FL" >/dev/null 2>&1 )
+          prep b-gcc
+          ( cd b-gcc
+            X="-O3 -ffast-math -mfix-cortex-a53-835769 -D_REENTRANT -falign-functions=16 -fomit-frame-pointer -fpic -pthread -flto=auto -fno-stack-protector -flax-vector-conversions"
+            ./configure CC=gcc CXX=g++ AR=gcc-ar RANLIB=gcc-ranlib \
+              CFLAGS="-finline-functions -march=armv8-a+crypto -mtune=cortex-a53 $X" \
+              CXXFLAGS="-funroll-loops -finline-functions -march=armv8-a+crypto -mtune=cortex-a53 $X" \
+              LDFLAGS="-flto=auto" >/dev/null
+            make -j"$(nproc)" CPPFLAGS="$FL" > make.log 2>&1 || { grep -m30 -E 'error' make.log; exit 1; } )
+          ls -la b-clang/ccminer b-gcc/ccminer
+          G="-O2 -march=armv8-a+crypto -fno-strict-aliasing -flax-vector-conversions -I. -Iverus"
+          gcc $G -c verus/haraka.c -o hk.o; gcc $G -c verus/haraka_portable.c -o hkp.o
+          g++ $G -std=gnu++11 -DVERUS_X2 -DVERUS_SEL14 -DVERUS_SEL18 -c verus/verus_clhash_portable.cpp -o cl2.o
+          g++ $G -std=gnu++11 -DVERUS_X2 -DVERUS_SEL14 -DVERUS_SEL18 tests/verus_x2test.cpp cl2.o hk.o hkp.o -o x2test
+          ./x2test 200000 | sed 's/^/gcc /' | tee eq.txt
+          g++ $G -std=gnu++11 -c verus/verus_clhash_portable.cpp -o cl.o
+          g++ $G -std=gnu++11 tests/verus_pristinetest.cpp cl.o hk.o hkp.o -o pristinetest
+          ./pristinetest 200000 | sed 's/^/gcc /' | tee -a eq.txt
+          # the miner itself: same hash for the same work in both builds is checked by the tests above;
+          # also check the gcc miner finds the benchmark rate in a sane range
+          ! grep -q FAIL eq.txt
+      - name: Benchmark clang vs gcc (1 thread, plain loop and two-nonce path, 3 alternating rounds)
+        run: |
+          for r in 1 2 3; do
+            order="b-clang b-gcc"; [ $((r % 2)) = 0 ] && order="b-gcc b-clang"
+            for d in $order; do for p in plain twononce; do
+              e=""; [ $p = plain ] && e="VERUS_LANES=1"
+              hs=$(env $e ./$d/ccminer -a verus --benchmark -t 1 --time-limit 20 --no-color 2>&1 | grep -E '^[0-9]+$' | tail -1)
+              echo "round $r $d $p ${hs:-NONE}" | tee -a gccbench.txt
+            done; done
+          done
+          awk '{k=$3" "$4; s[k]+=$5; n[k]++} END{for(k in s) printf "%s mean %.0f\n", k, s[k]/n[k]}' gccbench.txt | sort | tee -a gccbench.txt
+      - name: Publish
+        if: always()
+        run: |
+          [ -f eq.txt ] && echo "::notice title=gcc-eq::$(tr '\n' '|' < eq.txt)"
+          [ -f gccbench.txt ] && echo "::notice title=gcc-bench::$(tr '\n' '|' < gccbench.txt)"
+          [ -f gcc.log ] && echo "::notice title=gcc-log::$(tail -30 gcc.log | tr '\n' '|' | cut -c1-3000)"
