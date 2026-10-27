@@ -17,13 +17,26 @@
  *
  **/
 
+#ifndef VERUS_CLHASH_H_GUARD
+#define VERUS_CLHASH_H_GUARD
 #include "sse2neon.h"
 uint64_t verusclhash_port2_1(void * random, const unsigned char buf[64], uint64_t keyMask, uint16_t *  __restrict fixrand, uint16_t * __restrict fixrandex);
 uint64_t verusclhash_port2_2(void * random, const unsigned char buf[64], uint64_t keyMask, uint16_t *  __restrict fixrand, uint16_t * __restrict fixrandex, __m128i *g_prand, __m128i *g_prandex);
 
 #ifdef VERUS_X2
 /* N independent nonces in lockstep (N = 2, 3 or 4); each lane needs its own copy of the key */
-template<int N>
+/* SEL bit 0: branch-free inner choice in case 0x14, bit 1: same in case 0x18 (variants x2sel, x2sel2).
+ * The default comes from the build flags; x2percore picks it per core at run time. */
+#if defined(VERUS_SEL14) && defined(VERUS_SEL18)
+#  define VERUS_SEL_DEFAULT 3
+#elif defined(VERUS_SEL14)
+#  define VERUS_SEL_DEFAULT 1
+#elif defined(VERUS_SEL18)
+#  define VERUS_SEL_DEFAULT 2
+#else
+#  define VERUS_SEL_DEFAULT 0
+#endif
+template<int N, int SEL = VERUS_SEL_DEFAULT>
 void verusclhash_port2_2_xN(void **random, const unsigned char **buf, uint64_t keyMask,
 		uint16_t **fixrand, uint16_t **fixrandex, __m128i **g_prand, __m128i **g_prandex, uint64_t *out);
 #ifdef VERUS_FUSE
@@ -35,3 +48,4 @@ void verusclhash_port2_2_fuse2(__m128i * __restrict rsA, __m128i * __restrict rs
 		uint64_t out[2]);
 #endif
 #endif
+#endif /* VERUS_CLHASH_H_GUARD */

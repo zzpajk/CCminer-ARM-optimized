@@ -739,6 +739,7 @@ uint32_t verus_dbg_n;
  * __verusclmulwithoutreduction64alignedrepeat_port2_2 above (generated from it, not rewritten), so two
  * independent nonces can be advanced in lockstep and the out-of-order core can overlap their dependency
  * chains. Each lane has its own key copy: a nonce mutates the key while hashing. */
+template<int SEL>
 FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *randomsource,
 		const __m128i *pbuf_copy, uint64_t keyMask, uint16_t * __restrict fixrand,
 		uint16_t * __restrict fixrandex, __m128i *g_prand, __m128i *g_prandex)
@@ -1004,7 +1005,7 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
                                                 onekey = _mm_load_si128_emu(rc++);
                                                 //printf("selector %" PRIu64 "\n", selector);
 
-#ifdef VERUS_SEL14
+if (SEL & 1) {
                                                 /* variant x2sel: both arms are computed and the result is selected
                                                  * without a branch. Neither arm depends on acc until the final XOR, so
                                                  * an out-of-order core runs them ahead; this removes a 50/50 branch
@@ -1025,7 +1026,7 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
                                                                 vreinterpretq_u64_s64(clprodc), vreinterpretq_u64_s64(aesv))));
                                                         aesround += 1 - bit;
                                                 }
-#else
+} else {
                                                 if (VERUS_ABL_INNER(selector, rounds))
                                                 {
                                                         const __m128i temp2 = _mm_load_si128_emu(rounds & 1 ? pbuf : pbsf);  //rounds is odd
@@ -1043,7 +1044,7 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 
                                                         acc ^= onekey ^ temp2;
                                                 }
-#endif
+}
                                 rounds--;
                                 }
                         }
@@ -1095,7 +1096,7 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
                         if ( rounds >= 0 )
                         {
                                     onekey = _mm_load_si128_emu(rc++);
-#ifdef VERUS_SEL18
+if (SEL & 2) {
                                     /* variant x2sel2: both arms computed, result selected without a branch.
                                      * The divide arm does not depend on acc, so it runs ahead on an
                                      * out-of-order core; the price is a divide on every iteration. */
@@ -1116,7 +1117,7 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
                                         acc = vreinterpretq_s64_u64(vbslq_u64(m, vreinterpretq_u64_s64(accd), vreinterpretq_u64_s64(accc)));
                                         onekey = vreinterpretq_s64_u64(vbslq_u64(m, vreinterpretq_u64_s64(okd), vreinterpretq_u64_s64(okc)));
                                     }
-#else
+} else {
                                     if (VERUS_ABL_INNER(selector, rounds))
                                     {
                                         const __m128i temp2 = _mm_load_si128_emu(rounds & 1 ? pbuf : pbsf );
@@ -1136,7 +1137,7 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
                                         const __m128i clprod2 = _mm_mulhrs_epi16_emu(acc, onekey);
                                         acc = _mm_xor_si128_emu(clprod2, acc);
                                     }
-#endif
+}
                                     rounds--;
                         }
                 }
@@ -1175,7 +1176,7 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 
 /* N independent nonces in lockstep (N = 2..4), each lane with its own key. Round code is the same as the
  * single-nonce loop; only the order of execution differs. */
-template<int N>
+template<int N, int SEL>
 void verusclhash_port2_2_xN(void **random, const unsigned char **buf, uint64_t keyMask,
 		uint16_t **fixrand_in, uint16_t **fixrandex_in, __m128i **g_prand_in, __m128i **g_prandex_in, uint64_t *out)
 {
@@ -1198,7 +1199,7 @@ void verusclhash_port2_2_xN(void **random, const unsigned char **buf, uint64_t k
 	{
 #pragma clang loop unroll(full)
 		for (int l = 0; l < N; l++)
-			verus_round_port2_2(acc[l], i, rs[l], pc[l], keyMask, fr[l], fre[l], gp[l], gpx[l]);
+			verus_round_port2_2<SEL>(acc[l], i, rs[l], pc[l], keyMask, fr[l], fre[l], gp[l], gpx[l]);
 	}
 #pragma clang loop unroll(full)
 	for (int l = 0; l < N; l++) {
@@ -1206,9 +1207,12 @@ void verusclhash_port2_2_xN(void **random, const unsigned char **buf, uint64_t k
 		out[l] = precompReduction64_port(acc[l]);
 	}
 }
-template void verusclhash_port2_2_xN<2>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
-template void verusclhash_port2_2_xN<3>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
-template void verusclhash_port2_2_xN<4>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 0>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 1>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 2>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 3>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<3, 0>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<4, 0>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 /* BEGIN GENERATED x2fuse (tools/gen_fuse.py) */
 #ifdef VERUS_FUSE
 /* variant x2fuse: two lanes with ONE 64-way jump per round on the pair (case of lane A, case of lane B).

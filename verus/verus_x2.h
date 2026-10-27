@@ -40,7 +40,7 @@ static inline void verus_fixkey_lane(const struct verus_lane *l)
 
 /* Same sequence as Verus2hash() for each lane. nonce[l] points to the 15 nonce bytes of lane l;
  * hash[l] receives that lane's 32-byte result. */
-template<int N>
+template<int N, int SEL = VERUS_SEL_DEFAULT>
 static inline void Verus2hash_xN(unsigned char *const *hash, struct verus_lane *L, const unsigned char *const *nonce)
 {
 	void *rs[N]; const unsigned char *bf[N]; uint16_t *fr[N], *fre[N]; __m128i *gp[N], *gpx[N]; uint64_t im[N];
@@ -56,7 +56,7 @@ static inline void Verus2hash_xN(unsigned char *const *hash, struct verus_lane *
 				fr[0], fre[0], gp[0], gpx[0], fr[N - 1], fre[N - 1], gp[N - 1], gpx[N - 1], im);
 	else
 #endif
-	verusclhash_port2_2_xN<N>(rs, bf, 511, fr, fre, gp, gpx, im);
+	verusclhash_port2_2_xN<N, SEL>(rs, bf, 511, fr, fre, gp, gpx, im);
 	for (int l = 0; l < N; l++) {
 		unsigned char *b = L[l].buf;
 		memcpy(b + 47, &im[l], 8); memcpy(b + 55, &im[l], 8); memcpy(b + 63, &im[l], 1);

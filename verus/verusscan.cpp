@@ -213,6 +213,7 @@ extern "C" void Verus2hash(unsigned char *hash, unsigned char *curBuf, unsigned 
 #include <stdio.h>
 #include <sched.h>
 static uint8_t g_inorder[1024];
+static uint16_t g_impl[1024], g_part[1024];
 static void verus_scan_cpuinfo()
 {
 	FILE *f = fopen("/proc/cpuinfo", "r");
@@ -225,23 +226,50 @@ static void verus_scan_cpuinfo()
 		else if (sscanf(line, "CPU part : 0x%x", &u) == 1) { part = u; have_p = true; }
 		if (cpu >= 0 && cpu < 1024 && have_i && have_p) {
 			g_inorder[cpu] = (impl == 0x41 && (part == 0xd02 || part == 0xd03 || part == 0xd04 || part == 0xd05 || part == 0xd46));
+			g_impl[cpu] = (uint16_t)impl; g_part[cpu] = (uint16_t)part;
 			have_i = have_p = false;
 		}
 	}
 	fclose(f);
 }
 #endif
-static int verus_lanes_for_this_core(int thr_id)
+/* x2percore: which two-nonce code to use on an out-of-order core (SEL bit 0 = branch-free choice in
+ * case 0x14, bit 1 = same in case 0x18, which costs extra divides). Measured on S8/S20:
+ *   Mongoose M2 (0x53:0x001, slow divider): plain x2 best, sel2 -3..-4%
+ *   Mongoose M5 (0x53:0x004): sel2 +8% over x2;  Cortex-A76 (0x41:0xd0b): sel2 +4% over x2
+ * Other Mongoose generations are not measured yet and get bit 0 only. VERUS_SEL=0..3 in the environment
+ * overrides the choice for all out-of-order cores (for testing). */
+static int verus_sel_for_cpu(int cpu)
+{
+	int sel = VERUS_SEL_DEFAULT;
+#ifdef VERUS_PERCORE
+	if (cpu >= 0 && cpu < 1024) {
+		if (g_impl[cpu] == 0x53) sel = (g_part[cpu] == 0x001) ? 0 : (g_part[cpu] == 0x004) ? 3 : 1;
+		else sel = 3;
+	}
+	static int env = -2;
+	if (env == -2) { const char *e = getenv("VERUS_SEL"); env = (e && e[0] >= '0' && e[0] <= '3' && !e[1]) ? e[0] - '0' : -1; }
+	if (env >= 0) sel = env;
+#else
+	(void)cpu;
+#endif
+	return sel;
+}
+
+static int verus_lanes_for_this_core(int thr_id, int *sel)
 {
 #ifdef VERUS_AUTO
 	static bool once = (verus_scan_cpuinfo(), true); (void)once;
 	int cpu = sched_getcpu();
 	int lanes = (cpu >= 0 && cpu < 1024 && g_inorder[cpu]) ? 1 : VERUS_LANES;
+	*sel = (lanes > 1 && VERUS_LANES == 2) ? verus_sel_for_cpu(cpu) : 0;
 	static __thread int logged = 0;
-	if (!logged) { logged = 1; applog(LOG_INFO, "Verus thread %d on cpu %d: %d nonce(s) per step", thr_id, cpu, lanes); }
+	if (!logged) { logged = 1; applog(LOG_INFO, "Verus thread %d on cpu %d: %d nonce(s) per step%s", thr_id, cpu, lanes,
+		lanes == 1 ? "" : (*sel == 3 ? ", sel2" : *sel == 1 ? ", sel" : *sel == 2 ? ", sel18" : "")); }
 	return lanes;
 #else
 	(void)thr_id;
+	*sel = (VERUS_LANES == 2) ? VERUS_SEL_DEFAULT : 0;
 	return VERUS_LANES;
 #endif
 }
@@ -257,6 +285,7 @@ struct verus_scan_ctx {
 };
 
 /* variants x2/x3/x4/auto: VERUS_LANES nonces per iteration, each lane with its own key copy (see verus_x2.h). */
+template<int SEL>
 static __attribute__((noinline)) void verus_scan_lanes(struct verus_scan_ctx *c)
 {
 	struct work *work = c->work;
@@ -289,7 +318,7 @@ static __attribute__((noinline)) void verus_scan_lanes(struct verus_scan_ctx *c)
 		}
 		memset(vh, 0, sizeof(vh));
 
-		Verus2hash_xN<VERUS_LANES>(hp, L, np);
+		Verus2hash_xN<VERUS_LANES, (VERUS_LANES == 2 ? SEL : 0)>(hp, L, np);
 
 		for (int lane = 0; lane < NL; lane++) {
 			if (vh[lane][7] <= Htarg) {
@@ -382,13 +411,19 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 	throughput = 1;
 	const uint32_t Htarg = ptarget[7];
 #ifdef VERUS_X2
-	if (verus_lanes_for_this_core(thr_id) > 1)
+	int sel = 0;
+	if (verus_lanes_for_this_core(thr_id, &sel) > 1)
 	{
 		/* The multi-nonce loop lives in its own noinline function so that this function (and the plain loop
 		 * below, which is the baseline code) is compiled exactly as in the baseline build. */
 		struct verus_scan_ctx c = { work, thr_id, max_nonce, hashes_done, nonce_buf, nonceSpace, full_data, sol_data,
 			Htarg, vhash, data_key, fixrand, fixrandex, data_key_prand, data_key_prandex, blockhash_half, tv_start };
-		verus_scan_lanes(&c);
+		switch (sel) {
+		case 1:  verus_scan_lanes<1>(&c); break;
+		case 2:  verus_scan_lanes<2>(&c); break;
+		case 3:  verus_scan_lanes<3>(&c); break;
+		default: verus_scan_lanes<0>(&c); break;
+		}
 		goto out;
 	}
 #endif

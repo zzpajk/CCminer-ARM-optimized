@@ -25,6 +25,10 @@
  *
  *   x2sel2     x2sel plus the same for case 0x18 (divide/clmul), at the price of a divide per iteration
  *
+ *   x2percore  VERUS_X2 VERUS_AUTO VERUS_PERCORE  per core at run time: plain loop on in-order cores,
+ *                            x2 on Mongoose M1/M2, x2sel2 on M5 and ARM big cores, x2sel on other
+ *                            Mongoose; VERUS_SEL=0..3 overrides for testing
+ *
  * Variants are combined by defining more than one flag; the name then lists
  * them joined with '+'.
  */
@@ -48,7 +52,9 @@
 #  else
 #    define VERUS_VAR_LANES "+x4"
 #  endif
-#  ifdef VERUS_FUSE
+#  if defined(VERUS_PERCORE)
+#    define VERUS_VAR_FUSE "percore"
+#  elif defined(VERUS_FUSE)
 #    define VERUS_VAR_FUSE "fuse"
 #  elif defined(VERUS_SEL14) && defined(VERUS_SEL18)
 #    define VERUS_VAR_FUSE "sel2"
@@ -57,7 +63,7 @@
 #  else
 #    define VERUS_VAR_FUSE ""
 #  endif
-#  ifdef VERUS_AUTO
+#  if defined(VERUS_AUTO) && !defined(VERUS_PERCORE)
 #    define VERUS_VAR_X2 VERUS_VAR_LANES VERUS_VAR_FUSE "auto"
 #  else
 #    define VERUS_VAR_X2 VERUS_VAR_LANES VERUS_VAR_FUSE
