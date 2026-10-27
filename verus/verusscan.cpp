@@ -224,7 +224,7 @@ static inline void Verus2hash_pristine(unsigned char *hash, unsigned char *curBu
 
 #ifdef VERUS_X2
 /* How many nonces to hash in lockstep on the core this thread is running on.
- * VERUS_AUTO: in-order ARM cores (A34/A35/A53/A55/A510) do not overlap the lanes and lose a little
+ * VERUS_AUTO: in-order ARM cores (A34/A35/A53/A55/A510/A520, Kryo Silver) do not overlap the lanes and lose a little
  * (measured -3% on an A53), so they use the plain single-nonce loop; every other core uses VERUS_LANES.
  * Without VERUS_AUTO every core uses VERUS_LANES. Decided once per scan call from the current cpu. */
 #ifdef VERUS_AUTO
@@ -243,7 +243,10 @@ static void verus_scan_cpuinfo()
 		else if (sscanf(line, "CPU implementer : 0x%x", &u) == 1) { impl = u; have_i = true; }
 		else if (sscanf(line, "CPU part : 0x%x", &u) == 1) { part = u; have_p = true; }
 		if (cpu >= 0 && cpu < 1024 && have_i && have_p) {
-			g_inorder[cpu] = (impl == 0x41 && (part == 0xd02 || part == 0xd03 || part == 0xd04 || part == 0xd05 || part == 0xd46));
+			/* in-order cores: Cortex-A34/A35/A53/A55/A510/A520, and Qualcomm Kryo "Silver" cores, which are
+			 * A53/A55 derivatives with Qualcomm part numbers (Snapdragon 835: 0x801, 845: 0x803, 855: 0x805) */
+			g_inorder[cpu] = (impl == 0x41 && (part == 0xd02 || part == 0xd03 || part == 0xd04 || part == 0xd05 || part == 0xd46 || part == 0xd80))
+				|| (impl == 0x51 && (part == 0x801 || part == 0x803 || part == 0x805));
 			g_impl[cpu] = (uint16_t)impl; g_part[cpu] = (uint16_t)part;
 			have_i = have_p = false;
 		}
