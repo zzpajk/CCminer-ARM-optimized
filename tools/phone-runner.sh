@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# phone-runner.sh v1.2 - lets Claude queue Verus benchmark jobs for this phone through a private GitHub repo.
+# phone-runner.sh v1.3 - lets Claude queue Verus benchmark jobs for this phone through a private GitHub repo.
 #
 # The phone polls the jobs repo (git over SSH with a deploy key that can only reach that one repo), runs
 # each new job for this phone and commits the output back. A job can ONLY run one of the scripts in
@@ -16,7 +16,7 @@
 #   timeout=<minutes>                    optional, default 240
 # Results (written by the phone):         results/NAME/<id>/{status,console.log,report.txt}, results/NAME/heartbeat.txt
 set -u
-RUNNER_VERSION=1.2
+RUNNER_VERSION=1.3
 JOBS_REPO="${VERUS_JOBS_REPO:-git@github.com:zzpajk/verus-phone-jobs.git}"
 FORK="${VERUS_FORK:-https://github.com/zzpajk/CCminer-ARM-optimized.git}"
 CONF="$HOME/.verus-runner.conf"
@@ -111,6 +111,11 @@ run_job() { # job-file
 		# the scripts write through tee (process substitution), which can still be flushing when bash exits
 		sleep 5
 		[ "$script" = bench ] && [ -f "$W/report.txt" ] && [ "$W/report.txt" -nt "$R/status" ] && cp "$W/report.txt" "$R/report.txt"
+		# on failure keep the end of the build log and the memory state, so the cause is visible remotely
+		if [ "$rc" != 0 ]; then
+			{ echo "== rc=$rc"; echo "== tail of $W/build.log"; tail -60 "$W/build.log" 2>/dev/null
+			  echo "== free -m"; free -m 2>/dev/null; echo "== dmesg (may be unreadable)"; dmesg 2>/dev/null | tail -15; } > "$R/failure.txt" 2>&1
+		fi
 		if [ "$script" = sweep ]; then
 			local sl; sl=$(ls -t "$W"/sweep-*.txt 2>/dev/null | head -1)
 			[ -n "$sl" ] && [ "$sl" -nt "$R/status" ] && cp "$sl" "$R/sweep-full.txt" && sed -n '/= RESULT/,$p' "$sl" > "$R/report.txt"
