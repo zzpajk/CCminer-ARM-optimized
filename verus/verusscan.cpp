@@ -261,7 +261,9 @@ static void verus_scan_cpuinfo()
  *   Mongoose M5 (0x53:0x004, S20): sel2 +8..9% over x2;  Cortex-A76 (0x41:0xd0b): sel2 +4% over x2
  *   Mongoose M3 (0x53:0x002, S9): sel2 +4% over sel, +7% over x2 (both sweep rounds)
  *   Cortex-A75 (0x41:0xd0a, S10): x2, sel, sel2 equal within heat drift; gets the default sel2
- * So only Mongoose M1/M2 use plain x2; every other out-of-order core uses sel2. VERUS_SEL=0..3 in the environment
+ *   Cortex-A73 (0x41:0xd09, Galaxy A40): x2 best (bench x2 +12.5% vs sel2 +7.8% over plain; sweep round 1
+ *   x2 > sel > sel2, round 2 a tie while throttling)
+ * So Mongoose M1/M2 and Cortex-A73 use plain x2; every other out-of-order core uses sel2. VERUS_SEL=0..3 in the environment
  * overrides the choice for all out-of-order cores (for testing); VERUS_SEL=7 adds the fully branch-free
  * case 0x14 (x2sel3). */
 static int verus_sel_for_cpu(int cpu)
@@ -270,6 +272,7 @@ static int verus_sel_for_cpu(int cpu)
 #ifdef VERUS_PERCORE
 	if (cpu >= 0 && cpu < 1024) {
 		if (g_impl[cpu] == 0x53) sel = (g_part[cpu] == 0x001) ? 0 : 3;
+		else if (g_impl[cpu] == 0x41 && g_part[cpu] == 0xd09) sel = 0;   /* Cortex-A73 */
 		else sel = 3;
 	}
 #ifdef VERUS_PERCORE3

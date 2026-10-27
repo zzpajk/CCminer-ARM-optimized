@@ -56,6 +56,7 @@ inorder() { case "$1:$2" in 0x41:0xd02|0x41:0xd03|0x41:0xd04|0x41:0xd05|0x41:0xd
 default_path() {
 	if inorder "$1" "$2"; then echo plain
 	elif [ "$1" = 0x53 ]; then case "$2" in 0x001) echo x2;; *) echo sel2;; esac
+	elif [ "$1:$2" = 0x41:0xd09 ]; then echo x2
 	else echo sel2; fi
 }
 

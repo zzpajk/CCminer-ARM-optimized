@@ -4,8 +4,8 @@
 # What it builds (variant "x2percore+pristine", chosen per core at run time):
 #   in-order cores (Cortex-A53/A55/A510, Kryo Silver)  the original one-nonce loop, with the key restored from
 #                                                       a pristine copy instead of a per-round journal
-#   Mongoose M1/M2 (Exynos 8890/8895)                  two nonces hashed side by side
-#   every other big core (Mongoose M3-M5, A73-A78, X1)  two nonces side by side + branch-free choices
+#   Mongoose M1/M2, Cortex-A73                        two nonces hashed side by side
+#   every other big core (Mongoose M3-M5, A75-A78, X1)  two nonces side by side + branch-free choices
 # Compiler: clang 17 when it can be installed (measured +2-3% over clang 10/14 on 5 phones, clang 18 and
 # GCC were slower); otherwise the system clang.
 # Measured on Exynos phones (all cores, vs the unmodified miner): S8 +13%, S9 +20%, S10 +21%, S20 +17..19%,
