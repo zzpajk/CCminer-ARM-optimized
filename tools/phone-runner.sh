@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# phone-runner.sh v1.0 - lets Claude queue Verus benchmark jobs for this phone through a private GitHub repo.
+# phone-runner.sh v1.1 - lets Claude queue Verus benchmark jobs for this phone through a private GitHub repo.
 #
 # The phone polls the jobs repo (git over SSH with a deploy key that can only reach that one repo), runs
 # each new job for this phone and commits the output back. A job can ONLY run one of the scripts in
@@ -16,7 +16,7 @@
 #   timeout=<minutes>                    optional, default 240
 # Results (written by the phone):         results/NAME/<id>/{status,console.log,report.txt}, results/NAME/heartbeat.txt
 set -u
-RUNNER_VERSION=1.0
+RUNNER_VERSION=1.1
 JOBS_REPO="${VERUS_JOBS_REPO:-git@github.com:zzpajk/verus-phone-jobs.git}"
 FORK="${VERUS_FORK:-https://github.com/zzpajk/CCminer-ARM-optimized.git}"
 CONF="$HOME/.verus-runner.conf"
@@ -108,8 +108,13 @@ run_job() { # job-file
 		local jp=$! n=0
 		while kill -0 $jp 2>/dev/null; do sleep 10; n=$((n + 1)); [ $((n % 30)) = 0 ] && push_results "job $id progress"; done
 		rc=$(cat "$W/.rc" 2>/dev/null || echo 1); rm -f "$W/.rc"
+		# the scripts write through tee (process substitution), which can still be flushing when bash exits
+		sleep 5
 		[ "$script" = bench ] && [ -f "$W/report.txt" ] && [ "$W/report.txt" -nt "$R/status" ] && cp "$W/report.txt" "$R/report.txt"
-		[ "$script" = sweep ] && sed -n '/= RESULT/,$p' "$R/console.log" > "$R/report.txt";;
+		if [ "$script" = sweep ]; then
+			local sl; sl=$(ls -t "$W"/sweep-*.txt 2>/dev/null | head -1)
+			[ -n "$sl" ] && [ "$sl" -nt "$R/status" ] && cp "$sl" "$R/sweep-full.txt" && sed -n '/= RESULT/,$p' "$sl" > "$R/report.txt"
+		fi;;
 	esac
 	echo "$([ "$rc" = 0 ] && echo done || echo failed) $(date '+%F %T') rc=$rc" > "$R/status"
 	push_results "job $id finished rc=$rc"
