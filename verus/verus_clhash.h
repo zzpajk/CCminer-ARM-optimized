@@ -25,9 +25,12 @@ uint64_t verusclhash_port2_2(void * random, const unsigned char buf[64], uint64_
 
 #ifdef VERUS_X2
 /* N independent nonces in lockstep (N = 2, 3 or 4); each lane needs its own copy of the key */
-/* SEL bit 0: branch-free inner choice in case 0x14, bit 1: same in case 0x18 (variants x2sel, x2sel2).
+/* SEL bit 0: branch-free inner choice in case 0x14, bit 1: same in case 0x18 (variants x2sel, x2sel2),
+ * bit 2: case 0x14 entirely branch-free, all 8 steps computed and masked (variant x2sel3, used as SEL 7).
  * The default comes from the build flags; x2percore picks it per core at run time. */
-#if defined(VERUS_SEL14) && defined(VERUS_SEL18)
+#if defined(VERUS_SEL3)
+#  define VERUS_SEL_DEFAULT 7
+#elif defined(VERUS_SEL14) && defined(VERUS_SEL18)
 #  define VERUS_SEL_DEFAULT 3
 #elif defined(VERUS_SEL14)
 #  define VERUS_SEL_DEFAULT 1

@@ -29,6 +29,8 @@
  *                            x2 on Mongoose M1/M2, x2sel2 on M5 and ARM big cores, x2sel on other
  *                            Mongoose; VERUS_SEL=0..3 overrides for testing
  *
+ *   x2sel3     VERUS_X2 VERUS_SEL3   x2sel2 plus case 0x14 with no branch at all (8 masked steps)
+ *
  * Variants are combined by defining more than one flag; the name then lists
  * them joined with '+'.
  */
@@ -56,6 +58,8 @@
 #    define VERUS_VAR_FUSE "percore"
 #  elif defined(VERUS_FUSE)
 #    define VERUS_VAR_FUSE "fuse"
+#  elif defined(VERUS_SEL3)
+#    define VERUS_VAR_FUSE "sel3"
 #  elif defined(VERUS_SEL14) && defined(VERUS_SEL18)
 #    define VERUS_VAR_FUSE "sel2"
 #  elif defined(VERUS_SEL14)

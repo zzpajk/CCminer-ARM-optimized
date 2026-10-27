@@ -996,6 +996,41 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 //				}
 //			} while (rounds--);
 //
+if (SEL & 4) {
+			/* variant x2sel3: case 0x14 without any branch. The loop runs (selector >> 61) + 1 steps; every
+			 * step's contribution depends only on the key, the buffer and the selector, never on acc, so all
+			 * 8 possible steps are computed (independent, so they run in parallel on an out-of-order core) and
+			 * masks keep exactly the steps and arms the original loop would execute. Same result. */
+			const int64_t r0 = rounds;
+			__m128i sum = _mm_setzero_si128();
+#pragma clang loop unroll(full)
+			for (int j = 0; j < 8; j++)
+			{
+				const int64_t rj = r0 - j;                       /* the original 'rounds' at this step */
+				const uint64_t active = (rj >= 0) ? 1 : 0;
+				const int64_t rs = rj & 7;                       /* any valid shift for inactive steps */
+				const uint64_t bit = VERUS_ABL_INNER(selector, rs) ? 1 : 0;
+				const __m128i key_j = _mm_load_si128_emu(prand + j);
+				const __m128i tc = _mm_load_si128_emu(rs & 1 ? pbuf : pbsf);
+				const __m128i addc = _mm_xor_si128_emu(key_j, tc);
+				const __m128i clprodc = _mm_clmulepi64_si128_emu(addc, addc, 0x10);
+				__m128i ka = key_j;
+				__m128i ta = _mm_load_si128_emu(rs & 1 ? pbsf : pbuf);
+				{
+					const __m128i *rc = prand + j + 1;           /* the original rc after its ++ */
+					const uint64_t roundidx = aesround << 2;
+					AES2(ka, ta, roundidx);
+				}
+				MIX2_EMU(ka, ta);
+				const __m128i aesv = _mm_xor_si128_emu(ka, ta);
+				const uint64x2_t mb = vdupq_n_u64(0 - bit);
+				const __m128i contrib = vreinterpretq_s64_u64(vbslq_u64(mb, vreinterpretq_u64_s64(clprodc), vreinterpretq_u64_s64(aesv)));
+				sum = _mm_xor_si128_emu(sum, vreinterpretq_s64_u64(vandq_u64(vreinterpretq_u64_s64(contrib), vdupq_n_u64(0 - active))));
+				aesround += active & (1 - bit);
+			}
+			acc = _mm_xor_si128_emu(acc, sum);
+			rounds = -1;
+			} else {
 #pragma clang loop unroll(full)
                         //for ( int64_t count = 1; count <= 8; count++ )
                         for ( uint64_t count = 8; count--;  )
@@ -1048,6 +1083,7 @@ if (SEL & 1) {
                                 rounds--;
                                 }
                         }
+			}
 
 
 			const __m128i tempa1 = _mm_load_si128_emu(prand);
@@ -1211,6 +1247,7 @@ template void verusclhash_port2_2_xN<2, 0>(void **, const unsigned char **, uint
 template void verusclhash_port2_2_xN<2, 1>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<2, 2>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<2, 3>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 7>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<3, 0>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<4, 0>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 /* BEGIN GENERATED x2fuse (tools/gen_fuse.py) */

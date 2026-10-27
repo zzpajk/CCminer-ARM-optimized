@@ -238,7 +238,8 @@ static void verus_scan_cpuinfo()
  *   Mongoose M2 (0x53:0x001, slow divider): plain x2 best, sel2 -3..-4%
  *   Mongoose M5 (0x53:0x004): sel2 +8% over x2;  Cortex-A76 (0x41:0xd0b): sel2 +4% over x2
  * Other Mongoose generations are not measured yet and get bit 0 only. VERUS_SEL=0..3 in the environment
- * overrides the choice for all out-of-order cores (for testing). */
+ * overrides the choice for all out-of-order cores (for testing); VERUS_SEL=7 adds the fully branch-free
+ * case 0x14 (x2sel3). */
 static int verus_sel_for_cpu(int cpu)
 {
 	int sel = VERUS_SEL_DEFAULT;
@@ -248,7 +249,7 @@ static int verus_sel_for_cpu(int cpu)
 		else sel = 3;
 	}
 	static int env = -2;
-	if (env == -2) { const char *e = getenv("VERUS_SEL"); env = (e && e[0] >= '0' && e[0] <= '3' && !e[1]) ? e[0] - '0' : -1; }
+	if (env == -2) { const char *e = getenv("VERUS_SEL"); env = (e && e[0] >= '0' && e[0] <= '7' && !e[1]) ? e[0] - '0' : -1; }
 	if (env >= 0) sel = env;
 #else
 	(void)cpu;
@@ -265,7 +266,7 @@ static int verus_lanes_for_this_core(int thr_id, int *sel)
 	*sel = (lanes > 1 && VERUS_LANES == 2) ? verus_sel_for_cpu(cpu) : 0;
 	static __thread int logged = 0;
 	if (!logged) { logged = 1; applog(LOG_INFO, "Verus thread %d on cpu %d: %d nonce(s) per step%s", thr_id, cpu, lanes,
-		lanes == 1 ? "" : (*sel == 3 ? ", sel2" : *sel == 1 ? ", sel" : *sel == 2 ? ", sel18" : "")); }
+		lanes == 1 ? "" : (*sel == 7 ? ", sel3" : *sel == 3 ? ", sel2" : *sel == 1 ? ", sel" : *sel == 2 ? ", sel18" : "")); }
 	return lanes;
 #else
 	(void)thr_id;
@@ -419,6 +420,7 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 		struct verus_scan_ctx c = { work, thr_id, max_nonce, hashes_done, nonce_buf, nonceSpace, full_data, sol_data,
 			Htarg, vhash, data_key, fixrand, fixrandex, data_key_prand, data_key_prandex, blockhash_half, tv_start };
 		switch (sel) {
+		case 7:  verus_scan_lanes<7>(&c); break;
 		case 1:  verus_scan_lanes<1>(&c); break;
 		case 2:  verus_scan_lanes<2>(&c); break;
 		case 3:  verus_scan_lanes<3>(&c); break;
