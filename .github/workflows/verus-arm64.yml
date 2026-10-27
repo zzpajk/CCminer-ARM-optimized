@@ -89,6 +89,12 @@ jobs:
           ! grep -q FAIL difftest.txt
           [ "$(grep -c 'x2test.*PASS' difftest.txt)" = 8 ]
           grep -q 'pristinetest.*PASS' difftest.txt
+      - name: One-step build script (build-verus.sh, system clang)
+        run: |
+          bash build-verus.sh --system-clang | tail -4
+          ./ccminer-verus --version 2>&1 | grep -q 'Verus variant: x2percore+pristine'
+          hs=$(./ccminer-verus -a verus --benchmark -t 1 --time-limit 10 --no-color 2>&1 | grep -E '^[0-9]+$' | tail -1)
+          echo "build-verus.sh ok, 1T ${hs:-NONE} H/s" | tee -a difftest.txt
       - name: Selector statistics
         run: |
           clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_STATS -I. -Iverus \
