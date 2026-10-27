@@ -1,30 +1,33 @@
 #!/usr/bin/env bash
-# verus-core-sweep.sh v1.0: fill in the x2percore table for a new phone in one run.
+# verus-core-sweep.sh v1.1: fill in the x2percore table for a new phone in one run.
 #
 # For every CPU core type of this device (grouped by "CPU implementer:part" from /proc/cpuinfo) it runs the
 # miner pinned to ONE core of that type, once per hashing path, and reports which path is fastest:
 #   plain  single-nonce loop (what in-order cores use)       VERUS_LANES=1
+#   plainp the same loop, variant "pristine" (no key journal) VERUS_LANES=1, x2percore+pristine binary
 #   x2     two nonces in lockstep                           VERUS_LANES=2 VERUS_SEL=0
 #   sel    x2 + branch-free choice in case 0x14             VERUS_LANES=2 VERUS_SEL=1
 #   sel2   x2 + branch-free choice in cases 0x14 and 0x18   VERUS_LANES=2 VERUS_SEL=3
 # and compares the winner with what x2percore picks by default for that core type today.
 # Optionally (-a) it also runs all cores: x2percore default vs plain everywhere.
 #
-# It builds one binary (x2percore + pristine, from the fork's `variants` branch) unless -b gives one.
+# It builds two binaries from the fork's `variants` branch, x2percore and x2percore+pristine, unless -b/-p
+# give them (-b alone: the pristine column is skipped).
 # Needs: clang, make, git, libcurl/jansson/ssl dev packages (the same ones verus-ref-bench.sh installs).
 # Runs in UserLAnd/Ubuntu or Termux. Benchmark mode only: it never connects to a pool.
 #
-# Usage: bash verus-core-sweep.sh [-d secs] [-r rounds] [-c cooldown] [-b binary] [-B branch] [-a] [-A]
+# Usage: bash verus-core-sweep.sh [-d secs] [-r rounds] [-c cooldown] [-b bin] [-p bin] [-B branch] [-a] [-A]
 #   -d  seconds per run (default 20)        -r  rounds, order reversed every other round (default 2)
-#   -c  cooldown seconds between runs (8)   -b  use this ccminer binary instead of building
+#   -c  cooldown seconds between runs (8)   -b  x2percore binary to use instead of building
+#   -p  x2percore+pristine binary
 #   -B  branch or commit to build (variants)
 #   -a  also run the all-core comparison    -A  also test the x2 paths on in-order cores (normally skipped)
 set -u
-DUR=20; ROUNDS=2; COOL=8; BIN=""; BRANCH="variants"; ALLCORE=0; ALLINORDER=0
+DUR=20; ROUNDS=2; COOL=8; BIN=""; BINP=""; BRANCH="variants"; ALLCORE=0; ALLINORDER=0
 REPO="https://github.com/zzpajk/CCminer-ARM-optimized.git"
-while getopts "d:r:c:b:B:aAh" o; do
-	case "$o" in d) DUR=$OPTARG;; r) ROUNDS=$OPTARG;; c) COOL=$OPTARG;; b) BIN=$OPTARG;; B) BRANCH=$OPTARG;;
-		a) ALLCORE=1;; A) ALLINORDER=1;; *) sed -n '2,24p' "$0"; exit 0;; esac
+while getopts "d:r:c:b:p:B:aAh" o; do
+	case "$o" in d) DUR=$OPTARG;; r) ROUNDS=$OPTARG;; c) COOL=$OPTARG;; b) BIN=$OPTARG;; p) BINP=$OPTARG;; B) BRANCH=$OPTARG;;
+		a) ALLCORE=1;; A) ALLINORDER=1;; *) sed -n '2,27p' "$0"; exit 0;; esac
 done
 WORK="${VERUS_SWEEP_DIR:-$HOME/verus-sweep}"
 mkdir -p "$WORK"; cd "$WORK" || exit 1
@@ -75,7 +78,7 @@ NCPU=$(grep -c "^processor" "${VERUS_CPUINFO:-/proc/cpuinfo}")
 model=$(getprop ro.product.model 2>/dev/null); soc=$(getprop ro.hardware.chipname 2>/dev/null || true)
 [ -z "$model" ] && model=$(cat /sys/firmware/devicetree/base/model 2>/dev/null | tr -d '\0')
 [ -z "$soc" ] && soc=$(grep -m1 '^Hardware' "${VERUS_CPUINFO:-/proc/cpuinfo}" | sed 's/.*: //')
-say "verus-core-sweep v1.0  $(date '+%Y-%m-%d %H:%M')"
+say "verus-core-sweep v1.1  $(date '+%Y-%m-%d %H:%M')"
 say "Device: ${model:-?}  SoC: ${soc:-?}  CPUs: $NCPU  kernel $(uname -r)"
 say "Features: $(grep -m1 '^Features' "${VERUS_CPUINFO:-/proc/cpuinfo}" | sed 's/.*: //')"
 for k in "${TYPES[@]}"; do
@@ -88,35 +91,43 @@ done
 
 # ---------- binary ----------
 if [ -z "$BIN" ]; then
-	say ""; say "Building x2percore+pristine from $REPO ($BRANCH) ..."
+	say ""; say "Building x2percore and x2percore+pristine from $REPO ($BRANCH) ..."
 	if [ -d src/.git ]; then git -C src fetch -q origin "$BRANCH" && git -C src checkout -q FETCH_HEAD
 	else git clone -q -b "$BRANCH" "$REPO" src 2>/dev/null || { git clone -q "$REPO" src && git -C src checkout -q "$BRANCH"; }; fi
-	[ -d src ] || { say "clone failed"; exit 1; }
+	[ -d src/.git ] || { say "clone failed"; exit 1; }
 	rev=$(git -C src rev-parse --short HEAD)
-	rm -rf build; mkdir build
-	( cd src && git ls-files -z | grep -zv '\.o$' | xargs -0 cp --parents -t ../build )
-	cd build
-	find . -name '*.o' -delete; rm -f ccminer *.opt.yaml config.status
-	# older clang (e.g. clang 10 on Ubuntu 20.04) does not know -ffinite-loops
-	echo 'int main(){return 0;}' > /tmp/fl.c
-	clang -ffinite-loops -c /tmp/fl.c -o /tmp/fl.o 2>/dev/null || sed -i 's/-ffinite-loops //' configure.sh
-	sh ./configure.sh > configure.log 2>&1 || { tail -20 configure.log; exit 1; }
-	make -j"$NCPU" CPPFLAGS="-DVERUS_X2 -DVERUS_AUTO -DVERUS_PERCORE -DVERUS_PRISTINE" > make.log 2>&1 || { grep -E 'error' make.log | head -20; exit 1; }
-	cd "$WORK"
-	cp build/ccminer "ccminer-x2percorep-$rev"; BIN="$WORK/ccminer-x2percorep-$rev"
-	say "Built $BIN"
+	build() { # name cppflags
+		rm -rf "build-$1"; mkdir "build-$1"
+		( cd src && git ls-files -z | grep -zv '\.o$' | xargs -0 cp --parents -t "../build-$1" )
+		( cd "build-$1"
+		  find . -name '*.o' -delete; rm -f ccminer *.opt.yaml config.status
+		  # older clang (e.g. clang 10 on Ubuntu 20.04) does not know -ffinite-loops
+		  echo 'int main(){return 0;}' > fl.c
+		  clang -ffinite-loops -c fl.c -o fl.o 2>/dev/null || sed -i 's/-ffinite-loops //' configure.sh
+		  sh ./configure.sh > configure.log 2>&1 || { tail -20 configure.log; exit 1; }
+		  make -j"$NCPU" CPPFLAGS="$2" > make.log 2>&1 || { grep -E 'error' make.log | head -20; exit 1; } ) || exit 1
+		cp "build-$1/ccminer" "$WORK/ccminer-$1-$rev"
+		say "Built $WORK/ccminer-$1-$rev"
+	}
+	build x2percore "-DVERUS_X2 -DVERUS_AUTO -DVERUS_PERCORE"
+	build x2percorep "-DVERUS_X2 -DVERUS_AUTO -DVERUS_PERCORE -DVERUS_PRISTINE"
+	BIN="$WORK/ccminer-x2percore-$rev"; BINP="$WORK/ccminer-x2percorep-$rev"
 fi
 [ -x "$BIN" ] || { say "No binary at $BIN"; exit 1; }
 say "Binary: $BIN  ($("$BIN" --version 2>&1 | grep -o 'Verus variant: .*' | head -1))"
+if [ -n "$BINP" ]; then
+	[ -x "$BINP" ] || { say "No binary at $BINP"; exit 1; }
+	say "Binary: $BINP  ($("$BINP" --version 2>&1 | grep -o 'Verus variant: .*' | head -1))"
+fi
 
 # ---------- runs ----------
 # run NAME MASK THREADS -> prints H/s (time average is the miner's own final number)
 run() {
-	local name=$1 mask=$2 thr=$3 envs out hs path
-	case "$name" in plain) envs="VERUS_LANES=1";; x2) envs="VERUS_LANES=2 VERUS_SEL=0";; sel) envs="VERUS_LANES=2 VERUS_SEL=1";;
+	local name=$1 mask=$2 thr=$3 envs out hs path bin=$BIN
+	case "$name" in plain) envs="VERUS_LANES=1";; plainp) envs="VERUS_LANES=1"; bin=$BINP;; x2) envs="VERUS_LANES=2 VERUS_SEL=0";; sel) envs="VERUS_LANES=2 VERUS_SEL=1";;
 		sel2) envs="VERUS_LANES=2 VERUS_SEL=3";; default) envs="";; esac
 	local aff=""; [ "$mask" != none ] && aff="--cpu-affinity $mask"   # none: miner's own pinning (thread i on core i)
-	out=$(env $envs "$BIN" -a verus --benchmark -t "$thr" $aff --time-limit "$DUR" --no-color 2>&1)
+	out=$(env $envs "$bin" -a verus --benchmark -t "$thr" $aff --time-limit "$DUR" --no-color 2>&1)
 	hs=$(printf '%s\n' "$out" | grep -E '^[0-9]+$' | tail -1)
 	path=$(printf '%s\n' "$out" | grep -o 'cpu [0-9]*: [0-9] nonce(s) per step.*' | sed 's/ nonce(s) per step/ lane(s)/' | sort -u | head -3 | tr '\n' ';')
 	echo "${hs:-0}|$path"
@@ -125,14 +136,16 @@ hexmask() { local m=0 c; for c in "$@"; do m=$((m | (1 << c))); done; printf '0x
 
 declare -A SUM CNT PATHSEEN
 total=0
-for k in "${TYPES[@]}"; do inorder ${k%:*} ${k#*:} && [ $ALLINORDER = 0 ] && total=$((total + 1)) || total=$((total + 4)); done
+PL="plain"; [ -n "$BINP" ] && PL="plain plainp"
+npl=$(echo $PL | wc -w)
+for k in "${TYPES[@]}"; do inorder ${k%:*} ${k#*:} && [ $ALLINORDER = 0 ] && total=$((total + npl)) || total=$((total + npl + 3)); done
 total=$((total * ROUNDS)); [ $ALLCORE = 1 ] && total=$((total + 2 * ROUNDS))
 say ""; say "Plan: $total runs x ${DUR}s + ${COOL}s cooldown = about $(( total * (DUR + COOL + 3) / 60 )) min"
 n=0
 for ((r = 1; r <= ROUNDS; r++)); do
 	for k in "${TYPES[@]}"; do
 		set -- ${TYPE_CPUS[$k]}; c=$1
-		if inorder ${k%:*} ${k#*:} && [ $ALLINORDER = 0 ]; then paths="plain"; else paths="plain x2 sel sel2"; fi
+		if inorder ${k%:*} ${k#*:} && [ $ALLINORDER = 0 ]; then paths="$PL"; else paths="$PL x2 sel sel2"; fi
 		[ $((r % 2)) = 0 ] && paths=$(echo $paths | tr ' ' '\n' | tac | tr '\n' ' ')
 		for p in $paths; do
 			n=$((n + 1))
@@ -158,21 +171,22 @@ done
 avg() { [ "${CNT[$1]:-0}" -gt 0 ] && echo $(( SUM[$1] / CNT[$1] )) || echo 0; }
 pct() { awk -v a="$1" -v b="$2" 'BEGIN { if (b > 0) printf "%+.1f%%", (a / b - 1) * 100; else printf "n/a" }'; }
 say ""; say "================ RESULT (1 thread per core type, mean of $ROUNDS round(s), ${DUR}s runs) ================"
-printf '%-18s %-9s %10s %10s %10s %10s   %-6s %-8s %s\n' "core type" "id" "plain" "x2" "sel" "sel2" "best" "default" "verdict"
+printf '%-18s %-9s %10s %9s %9s %9s %9s   %-6s %-8s %s\n' "core type" "id" "plain" "pristine" "x2" "sel" "sel2" "best" "default" "verdict"
 for k in "${TYPES[@]}"; do
 	name=$(partname ${k%:*} ${k#*:}); def=$(default_path ${k%:*} ${k#*:})
 	pl=$(avg "$k/plain"); best=plain; bh=$pl; cells=""
-	for p in x2 sel sel2; do
+	for p in plainp x2 sel sel2; do
 		v=$(avg "$k/$p")
-		if [ "$v" -gt 0 ]; then cells="$cells $(printf '%10s' "$(pct $v $pl)")"; [ "$v" -gt "$bh" ] && { best=$p; bh=$v; }
-		else cells="$cells $(printf '%10s' -)"; fi
+		if [ "$v" -gt 0 ]; then cells="$cells $(printf '%9s' "$(pct $v $pl)")"; [ "$p" != plainp ] && [ "$v" -gt "$bh" ] && { best=$p; bh=$v; }
+		else cells="$cells $(printf '%9s' -)"; fi
 	done
 	dv=$(avg "$k/$def"); [ "$dv" -gt 0 ] || dv=$pl
 	if [ "$best" = "$def" ]; then verdict="default is best"
 	else verdict="best beats default by $(pct $bh $dv)"; fi
 	printf '%-18s %-9s %10s%s   %-6s %-8s %s\n' "$name" "$k" "$pl" "$cells" "$best" "$def" "$verdict"
 done
-say "(plain in H/s; x2/sel/sel2 as % vs plain on the same core)"
+say "(plain in H/s; the others as % vs plain on the same core. pristine = plain loop of the x2percore+pristine"
+say " binary; it only matters where 'best' is plain, i.e. on in-order cores)"
 if [ $ALLCORE = 1 ]; then
 	d=$(avg all/default); p=$(avg all/plain)
 	say "All $NCPU cores: x2percore default $d H/s, plain everywhere $p H/s ($(pct $d $p))"
@@ -181,7 +195,7 @@ say ""
 say "TABLE ROWS (paste these back):"
 for k in "${TYPES[@]}"; do
 	line="ROW $k $(partname ${k%:*} ${k#*:}) maxMHz=${TYPE_MAXF[$k]// MHz/} plain=$(avg "$k/plain")"
-	for p in x2 sel sel2; do v=$(avg "$k/$p"); [ "$v" -gt 0 ] && line="$line $p=$v"; done
+	for p in plainp x2 sel sel2; do v=$(avg "$k/$p"); [ "$v" -gt 0 ] && line="$line $p=$v"; done
 	say "$line"
 done
 say "Log saved to $LOG"
