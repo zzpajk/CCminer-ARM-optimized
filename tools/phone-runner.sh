@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# phone-runner.sh v1.1 - lets Claude queue Verus benchmark jobs for this phone through a private GitHub repo.
+# phone-runner.sh v1.2 - lets Claude queue Verus benchmark jobs for this phone through a private GitHub repo.
 #
 # The phone polls the jobs repo (git over SSH with a deploy key that can only reach that one repo), runs
 # each new job for this phone and commits the output back. A job can ONLY run one of the scripts in
@@ -16,7 +16,7 @@
 #   timeout=<minutes>                    optional, default 240
 # Results (written by the phone):         results/NAME/<id>/{status,console.log,report.txt}, results/NAME/heartbeat.txt
 set -u
-RUNNER_VERSION=1.1
+RUNNER_VERSION=1.2
 JOBS_REPO="${VERUS_JOBS_REPO:-git@github.com:zzpajk/verus-phone-jobs.git}"
 FORK="${VERUS_FORK:-https://github.com/zzpajk/CCminer-ARM-optimized.git}"
 CONF="$HOME/.verus-runner.conf"
@@ -37,7 +37,7 @@ push_results() { # message
 	  git diff --cached --quiet && exit 0
 	  git -c user.name="$PHONE" -c user.email="$PHONE@phones.invalid" commit -qm "$PHONE: $1" || exit 1
 	  for i in 1 2 3 4 5; do
-		git pull -q --rebase origin main >/dev/null 2>&1
+		git pull -q --rebase --autostash origin main >/dev/null 2>&1 || git rebase --abort >/dev/null 2>&1
 		git push -q origin HEAD:main >/dev/null 2>&1 && exit 0
 		sleep $((i * 5))
 	  done; exit 1 ) || say "push failed ($1), will retry with the next push"
@@ -136,7 +136,7 @@ loop() {
 	say "runner $RUNNER_VERSION for $PHONE started (pid $$)"
 	local last_hb=0 now
 	while :; do
-		( cd "$DIR" && git pull -q --rebase origin main ) >/dev/null 2>&1 || say "pull failed (network?)"
+		( cd "$DIR" && git pull -q --rebase --autostash origin main ) >/dev/null 2>&1 || { say "pull failed (network?)"; git -C "$DIR" rebase --abort >/dev/null 2>&1; }
 		for f in $(ls "$DIR/jobs/$PHONE"/*.job 2>/dev/null | sort); do
 			[ -f "$DIR/results/$PHONE/$(basename "$f" .job)/status" ] && continue
 			run_job "$f"; last_hb=$(date +%s)
