@@ -751,7 +751,8 @@ uint32_t verus_dbg_n;
  * __verusclmulwithoutreduction64alignedrepeat_port2_2 above (generated from it, not rewritten), so two
  * independent nonces can be advanced in lockstep and the out-of-order core can overlap their dependency
  * chains. Each lane has its own key copy: a nonce mutates the key while hashing. */
-template<int SEL>
+/* FIXC >= 0: the case is known at compile time (fused dispatch, SEL bit 3), so the switch folds away. */
+template<int SEL, int FIXC = -1>
 FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *randomsource,
 		const __m128i *pbuf_copy, uint64_t keyMask, uint16_t * __restrict fixrand,
 		uint16_t * __restrict fixrandex, __m128i *g_prand, __m128i *g_prandex)
@@ -784,7 +785,7 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 		//fixrandex[i] = prandex_idx;
 
 
-		switch (VERUS_ABL_SWITCH(selector, i))
+		switch (FIXC >= 0 ? (uint64_t)FIXC : (uint64_t)VERUS_ABL_SWITCH(selector, i))
 		{
 		case 0:
 		{
@@ -1243,6 +1244,26 @@ void verusclhash_port2_2_xN(void **random, const unsigned char **buf, uint64_t k
 		pc[l][0] = _mm_xor_si128(a[0], a[2]); pc[l][1] = _mm_xor_si128(a[1], a[3]); pc[l][2] = a[2]; pc[l][3] = a[3];
 		acc[l] = _mm_load_si128_emu(rs[l] + (keyMask + 2));
 	}
+	if (N == 2 && (SEL & 8)) {
+		/* SEL bit 3: fused dispatch. One 64-way jump per round on the pair (case of lane 0, case of lane 1);
+		 * every pair is a straight-line block with both case bodies (as primo-arm-miner's x2f path). */
+#pragma clang loop unroll(disable)
+		for (uint64_t i = 0; i < 32; i++) {
+			const uint32_t fz = (uint32_t)(((_mm_cvtsi128_si64_emu(acc[0]) & 0x1c) << 1) | ((_mm_cvtsi128_si64_emu(acc[N - 1]) & 0x1c) >> 2));
+#define VERUS_F64_CASE(I, J) case ((I) << 3) | (J): \
+			verus_round_port2_2<SEL, (I) * 4>(acc[0], i, rs[0], pc[0], keyMask, fr[0], fre[0], gp[0], gpx[0]); \
+			verus_round_port2_2<SEL, (J) * 4>(acc[N - 1], i, rs[N - 1], pc[N - 1], keyMask, fr[N - 1], fre[N - 1], gp[N - 1], gpx[N - 1]); \
+			break;
+#define VERUS_F64_ROW(I) VERUS_F64_CASE(I, 0) VERUS_F64_CASE(I, 1) VERUS_F64_CASE(I, 2) VERUS_F64_CASE(I, 3) \
+			VERUS_F64_CASE(I, 4) VERUS_F64_CASE(I, 5) VERUS_F64_CASE(I, 6) VERUS_F64_CASE(I, 7)
+			switch (fz) {
+			VERUS_F64_ROW(0) VERUS_F64_ROW(1) VERUS_F64_ROW(2) VERUS_F64_ROW(3)
+			VERUS_F64_ROW(4) VERUS_F64_ROW(5) VERUS_F64_ROW(6) VERUS_F64_ROW(7)
+			}
+#undef VERUS_F64_ROW
+#undef VERUS_F64_CASE
+		}
+	} else
 	for (uint64_t i = 0; i < 32; i++)
 	{
 #pragma clang loop unroll(full)
@@ -1262,6 +1283,9 @@ template void verusclhash_port2_2_xN<2, 3>(void **, const unsigned char **, uint
 template void verusclhash_port2_2_xN<2, 4>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<2, 5>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<2, 7>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 8>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 9>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 11>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<3, 0>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<4, 0>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 /* BEGIN GENERATED x2fuse (tools/gen_fuse.py) */
