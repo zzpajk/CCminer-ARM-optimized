@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# verus-ref-bench.sh v4.1 (Termux, or Ubuntu/Debian arm64 such as UserLAnd) - build named Verushash variants of Oink70/CCminer-ARM-optimized,
+# verus-ref-bench.sh v4.2 (Termux, or Ubuntu/Debian arm64 such as UserLAnd) - build named Verushash variants of Oink70/CCminer-ARM-optimized,
 # prove they match the baseline on THIS CPU, then benchmark them side by side.
 #
 # Variants (each prints its name in the miner banner):
@@ -19,7 +19,9 @@
 #              trained on THIS phone for ~50 s (plain loop and the two-nonce paths), then rebuilt with the
 #              profile. Needs llvm-profdata (package llvm), installed with the other dependencies.
 #   <variant>-cNN  the same code built with clang NN (e.g. x2percorep-c15) from /usr/lib/llvm-NN, installed
-#              from the distribution if missing (clang-NN lld-NN llvm-NN). Combines: x2percorep-c15-pgo.
+#              from the distribution if missing (clang-NN lld-NN llvm-NN), else from LLVM's apt repository
+#              (apt.llvm.org, added once). Combines: x2percorep-c17-pgo.
+#   <variant>-gcc  the same code built with GCC (same flags translated; LTO via gcc-ar)
 #
 # In-order cores (plain loop under x2auto/x2percore): Cortex-A34/A35/A53/A55/A510/A520 and Qualcomm Kryo Silver.
 # Embedded patch = git diff 9ea69fd..4c7326e of github.com/zzpajk/CCminer-ARM-optimized (branch variants).
@@ -61,7 +63,8 @@ mkdir -p "$WORK" "$BIN"
 
 have() { command -v "$1" >/dev/null 2>&1; }
 prop() { have getprop && getprop "$1" 2>/dev/null; }
-vbase() { local b="${1%-pgo}"; b="${b%-c[0-9]*}"; echo "${b%%-t*}"; }
+vbase() { local b="${1%-pgo}"; b="${b%-gcc}"; b="${b%-c[0-9]*}"; echo "${b%%-t*}"; }
+vgcc() { case "${1%-pgo}" in *-gcc) return 0;; esac; return 1; }
 vcc() { local b="${1%-pgo}"; case "$b" in *-c[0-9]*) echo "${b##*-c}";; *) echo "";; esac; }
 vpgo() { case "$1" in *-pgo) return 0;; esac; return 1; }
 vtune() { local b="${1%-pgo}"; case "${b%-c[0-9]*}" in *-t55) echo "-mtune=cortex-a55";; *-t76) echo "-mtune=cortex-a76";; *-tgen) echo "GENERIC";; *) echo "";; esac; }
@@ -112,6 +115,21 @@ for v in $VARIANTS; do
   if [ ! -x "/usr/lib/llvm-$nn/bin/clang" ] || [ ! -x "/usr/lib/llvm-$nn/bin/ld.lld" ]; then
     echo "      installing clang-$nn lld-$nn llvm-$nn for variant $v ..."
     if have apt-get; then $SUDO apt-get -o DPkg::Lock::Timeout=600 install -y "clang-$nn" "lld-$nn" "llvm-$nn" 2>&1 | tail -2; fi
+    if [ ! -x "/usr/lib/llvm-$nn/bin/clang" ] && have apt-get; then
+      # not in the distribution: use LLVM's own repository for this Ubuntu release
+      cn=$(. /etc/os-release 2>/dev/null; echo "${VERSION_CODENAME:-}")
+      if [ -n "$cn" ]; then
+        echo "      adding apt.llvm.org (llvm-toolchain-$cn-$nn) ..."
+        key="/etc/apt/trusted.gpg.d/apt.llvm.org.asc"
+        if [ ! -s "$key" ]; then
+          if have curl; then curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | $SUDO tee "$key" >/dev/null
+          elif have wget; then wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | $SUDO tee "$key" >/dev/null; fi
+        fi
+        echo "deb http://apt.llvm.org/$cn/ llvm-toolchain-$cn-$nn main" | $SUDO tee "/etc/apt/sources.list.d/llvm-$nn.list" >/dev/null
+        $SUDO apt-get -o DPkg::Lock::Timeout=600 update -qq 2>&1 | tail -2
+        $SUDO apt-get -o DPkg::Lock::Timeout=600 install -y "clang-$nn" "lld-$nn" "llvm-$nn" 2>&1 | tail -2
+      fi
+    fi
   fi
   [ -x "/usr/lib/llvm-$nn/bin/clang" ] || echo "      !! clang-$nn not available here; variant $v will be skipped"
 done
@@ -171,17 +189,25 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
     # (a prebuilt ccminer and *.o files). Regenerating with autogen fails on current autoconf, and is
     # not needed, so use the shipped configure as-is but delete every old build product first so nothing
     # stale is linked. configure.sh is upstream's own flag set (clang, lld, -mtune=cortex-a53).
-    nn=$(vcc "$v"); CCD=""
+    nn=$(vcc "$v"); CCD=""; GCCB=""
+    if vgcc "$v"; then
+      have gcc && have g++ || { $SUDO apt-get -o DPkg::Lock::Timeout=600 install -y gcc g++ 2>&1 | tail -1; }
+      have g++ || { echo "    skipped: g++ not installed"; VARIANTS=$(echo " $VARIANTS " | sed "s# $v # #; s#^ ##; s# \$##"); continue; }
+      GCCB=1; echo "    compiler: $(gcc --version | head -1)"
+      vpgo "$v" && { echo "    skipped: -pgo is clang-only"; VARIANTS=$(echo " $VARIANTS " | sed "s# $v # #; s#^ ##; s# \$##"); continue; }
+    fi
     if [ -n "$nn" ]; then
       CCD="/usr/lib/llvm-$nn/bin"
       [ -x "$CCD/clang" ] || { echo "    skipped: clang-$nn not installed"; VARIANTS=$(echo " $VARIANTS " | sed "s# $v # #; s#^ ##; s# \$##"); continue; }
       echo "    compiler: $("$CCD/clang" --version | head -1)"
     fi
     bld() { # dir extra-compiler-and-linker-flags
-      local R="$RMF"; [ -n "$CCD" ] && R=$(rmf_for "$CCD/clang")
+      local R="$RMF"; [ -n "$CCD" ] && R=$(rmf_for "$CCD/clang"); [ -n "$GCCB" ] && R=""
       rm -rf "$1"; cp -r "$WORK/src-orig" "$1"
       ( cd "$1" && find . -name '*.o' -delete && rm -f ccminer *.opt.yaml config.status && \
           { if [ -n "$CCD" ]; then sed -i "s#CXX=clang++ CC=clang#CXX=$CCD/clang++ CC=$CCD/clang#" configure.sh; fi; true; } && \
+          { if [ -n "$GCCB" ]; then printf '%s\n' 'X="-O3 -ffast-math -mfix-cortex-a53-835769 -D_REENTRANT -falign-functions=16 -fomit-frame-pointer -fpic -pthread -flto=auto -fno-stack-protector -flax-vector-conversions"' \
+              './configure CC=gcc CXX=g++ AR=gcc-ar RANLIB=gcc-ranlib CFLAGS="-finline-functions -march=armv8-a+crypto -mtune=cortex-a53 $X" CXXFLAGS="-funroll-loops -finline-functions -march=armv8-a+crypto -mtune=cortex-a53 $X" LDFLAGS="-flto=auto"' > configure.sh; fi; true; } && \
           { if [ -n "$R" ]; then echo "$R" | tr '|' '\n' | while IFS= read -r f; do sed -i "s# $f##g" configure.sh; done; fi; true; } && \
           { if [ "$tn" = GENERIC ]; then sed -i 's# -mtune=cortex-a53##g' configure.sh; elif [ -n "$tn" ]; then sed -i "s#-mtune=cortex-a53#$tn#g" configure.sh; fi; true; } && \
           { if [ -n "$2" ]; then sed -i "s#^extracflags=\"#extracflags=\"$2 #" configure.sh && sed -i "s#LDFLAGS=\"-v -flto#LDFLAGS=\"-v -flto $2#" configure.sh; fi; true; } && \
