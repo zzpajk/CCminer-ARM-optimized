@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# verus-core-sweep.sh v1.1: fill in the x2percore table for a new phone in one run.
+# verus-core-sweep.sh v1.2: fill in the x2percore table for a new phone in one run.
 #
 # For every CPU core type of this device (grouped by "CPU implementer:part" from /proc/cpuinfo) it runs the
 # miner pinned to ONE core of that type, once per hashing path, and reports which path is fastest:
@@ -78,7 +78,7 @@ NCPU=$(grep -c "^processor" "${VERUS_CPUINFO:-/proc/cpuinfo}")
 model=$(getprop ro.product.model 2>/dev/null); soc=$(getprop ro.hardware.chipname 2>/dev/null || true)
 [ -z "$model" ] && model=$(cat /sys/firmware/devicetree/base/model 2>/dev/null | tr -d '\0')
 [ -z "$soc" ] && soc=$(grep -m1 '^Hardware' "${VERUS_CPUINFO:-/proc/cpuinfo}" | sed 's/.*: //')
-say "verus-core-sweep v1.1  $(date '+%Y-%m-%d %H:%M')"
+say "verus-core-sweep v1.2  $(date '+%Y-%m-%d %H:%M')"
 say "Device: ${model:-?}  SoC: ${soc:-?}  CPUs: $NCPU  kernel $(uname -r)"
 say "Features: $(grep -m1 '^Features' "${VERUS_CPUINFO:-/proc/cpuinfo}" | sed 's/.*: //')"
 for k in "${TYPES[@]}"; do
@@ -140,7 +140,13 @@ PL="plain"; [ -n "$BINP" ] && PL="plain plainp"
 npl=$(echo $PL | wc -w)
 for k in "${TYPES[@]}"; do inorder ${k%:*} ${k#*:} && [ $ALLINORDER = 0 ] && total=$((total + npl)) || total=$((total + npl + 3)); done
 total=$((total * ROUNDS)); [ $ALLCORE = 1 ] && total=$((total + 2 * ROUNDS))
-say ""; say "Plan: $total runs x ${DUR}s + ${COOL}s cooldown = about $(( total * (DUR + COOL + 3) / 60 )) min"
+say ""; say "Plan: $total runs x ${DUR}s + ${COOL}s cooldown = about $(( total * (DUR + COOL + 3) / 60 + 1 )) min"
+# The first run after a build was far too slow on several phones (38k instead of 580k H/s on an A55):
+# let the phone settle, then do one discarded warm-up run on the first core type.
+[ -n "${rev:-}" ] && sleep 30
+set -- ${TYPE_CPUS[${TYPES[0]}]}
+say "warm-up run (discarded): $(run plain "$(hexmask $1)" 1 | cut -d'|' -f1) H/s"
+sleep "$COOL"
 n=0
 for ((r = 1; r <= ROUNDS; r++)); do
 	for k in "${TYPES[@]}"; do
