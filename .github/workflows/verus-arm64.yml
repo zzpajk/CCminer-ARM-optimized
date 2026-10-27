@@ -137,3 +137,64 @@ jobs:
           path: |
             bench.txt
             difftest.txt
+
+  # Separate job: (1) are AES round pairs (AESE+AESMC) kept adjacent so the core can fuse them?
+  # (2) does profile-guided optimisation (clang PGO) help the plain loop or the two-nonce path?
+  analysis:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld llvm make autoconf automake libtool pkg-config binutils \
+            libcurl4-openssl-dev libjansson-dev libssl-dev zlib1g-dev
+      - name: Build (normal, PGO-instrumented, PGO-optimised)
+        run: |
+          set -e
+          FL="-DVERUS_X2 -DVERUS_AUTO -DVERUS_PERCORE -DVERUS_PRISTINE"
+          build() { # dir extra-flags
+            rm -rf "$1"; mkdir "$1"
+            git ls-files -z | grep -zv '\.o$' | xargs -0 cp --parents -t "$1"
+            ( cd "$1"; find . -name '*.o' -delete; rm -f ccminer *.opt.yaml config.status
+              if [ -n "$2" ]; then
+                sed -i "s#^extracflags=\"#extracflags=\"$2 #" configure.sh
+                sed -i "s#LDFLAGS=\"-v -flto#LDFLAGS=\"-v -flto $2#" configure.sh
+              fi
+              ./configure.sh >/dev/null && make -j"$(nproc)" CPPFLAGS="$FL" >/dev/null 2>make.err || { tail -30 make.err; exit 1; } )
+          }
+          build b-norm ""
+          build b-inst "-fprofile-instr-generate"
+          # training: plain loop, two-nonce sel2 (this core's default), two-nonce x2 (Mongoose M1/M2 path)
+          cd b-inst
+          LLVM_PROFILE_FILE=$PWD/p1.profraw VERUS_LANES=1 ./ccminer -a verus --benchmark -t 1 --time-limit 15 --no-color >/dev/null 2>&1
+          LLVM_PROFILE_FILE=$PWD/p2.profraw ./ccminer -a verus --benchmark -t 1 --time-limit 15 --no-color >/dev/null 2>&1
+          LLVM_PROFILE_FILE=$PWD/p3.profraw VERUS_SEL=0 ./ccminer -a verus --benchmark -t 1 --time-limit 10 --no-color >/dev/null 2>&1
+          ls -la *.profraw
+          llvm-profdata merge -o ../verus.profdata p1.profraw p2.profraw p3.profraw
+          cd ..
+          build b-pgo "-fprofile-use=$PWD/verus.profdata -Wno-profile-instr-unprofiled -Wno-profile-instr-out-of-date"
+          for d in b-norm b-pgo; do
+            objdump -d --no-show-raw-insn $d/ccminer > $d.dis
+            echo "== $d" >> aes.txt
+            python3 tools/aes_pairs.py < $d.dis | sort -t= -k2 -nr | head -8 >> aes.txt
+          done
+          cat aes.txt
+      - name: Benchmark normal vs PGO (1 thread, plain loop and two-nonce path, 3 alternating rounds)
+        run: |
+          for r in 1 2 3; do
+            order="b-norm b-pgo"; [ $((r % 2)) = 0 ] && order="b-pgo b-norm"
+            for d in $order; do
+              for p in plain twononce; do
+                e=""; [ $p = plain ] && e="VERUS_LANES=1"
+                hs=$(env $e ./$d/ccminer -a verus --benchmark -t 1 --time-limit 20 --no-color 2>&1 | grep -E '^[0-9]+$' | tail -1)
+                echo "round $r $d $p ${hs:-NONE}" | tee -a pgo.txt
+              done
+            done
+          done
+          awk '{k=$3" "$4; s[k]+=$5; n[k]++} END{for(k in s) printf "%s mean %.0f\n", k, s[k]/n[k]}' pgo.txt | sort | tee -a pgo.txt
+      - name: Publish
+        if: always()
+        run: |
+          [ -f aes.txt ] && echo "::notice title=aes-pairs::$(tr '\n' '|' < aes.txt)"
+          [ -f pgo.txt ] && echo "::notice title=pgo::$(tr '\n' '|' < pgo.txt)"
