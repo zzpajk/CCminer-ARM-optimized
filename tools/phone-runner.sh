@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# phone-runner.sh v1.3 - lets Claude queue Verus benchmark jobs for this phone through a private GitHub repo.
+# phone-runner.sh v1.4 - lets Claude queue Verus benchmark jobs for this phone through a private GitHub repo.
 #
 # The phone polls the jobs repo (git over SSH with a deploy key that can only reach that one repo), runs
 # each new job for this phone and commits the output back. A job can ONLY run one of the scripts in
@@ -16,7 +16,7 @@
 #   timeout=<minutes>                    optional, default 240
 # Results (written by the phone):         results/NAME/<id>/{status,console.log,report.txt}, results/NAME/heartbeat.txt
 set -u
-RUNNER_VERSION=1.3
+RUNNER_VERSION=1.4
 JOBS_REPO="${VERUS_JOBS_REPO:-git@github.com:zzpajk/verus-phone-jobs.git}"
 FORK="${VERUS_FORK:-https://github.com/zzpajk/CCminer-ARM-optimized.git}"
 CONF="$HOME/.verus-runner.conf"
@@ -104,12 +104,16 @@ run_job() { # job-file
 		path=$(fetch_script "$commit" "$sname") || { echo "failed $(date '+%F %T') could not fetch $sname at $commit" > "$R/status"; push_results "job $id failed"; return; }
 		W="$RUNS/work-$script-${commit:0:7}"; mkdir -p "$W"
 		# live progress: copy the console log into the repo every 5 minutes while the job runs
-		( VERUS_WORK="$W" VERUS_SWEEP_DIR="$W" timeout $((tmo * 60)) bash "$path" "${args[@]}" < /dev/null > "$R/console.log" 2>&1; echo $? > "$W/.rc" ) &
+		# the live log lives outside the repo (git rewrites tracked files during pulls, which would detach the
+		# job's open file from the repo copy); the runner copies it in for every progress push and at the end
+		local LIVE="$W/console-$id.log"
+		( VERUS_WORK="$W" VERUS_SWEEP_DIR="$W" timeout $((tmo * 60)) bash "$path" "${args[@]}" < /dev/null > "$LIVE" 2>&1; echo $? > "$W/.rc" ) &
 		local jp=$! n=0
-		while kill -0 $jp 2>/dev/null; do sleep 10; n=$((n + 1)); [ $((n % 30)) = 0 ] && push_results "job $id progress"; done
+		while kill -0 $jp 2>/dev/null; do sleep 10; n=$((n + 1)); [ $((n % 30)) = 0 ] && { cp "$LIVE" "$R/console.log"; push_results "job $id progress"; }; done
 		rc=$(cat "$W/.rc" 2>/dev/null || echo 1); rm -f "$W/.rc"
 		# the scripts write through tee (process substitution), which can still be flushing when bash exits
 		sleep 5
+		cp "$LIVE" "$R/console.log"
 		[ "$script" = bench ] && [ -f "$W/report.txt" ] && [ "$W/report.txt" -nt "$R/status" ] && cp "$W/report.txt" "$R/report.txt"
 		# on failure keep the end of the build log and the memory state, so the cause is visible remotely
 		if [ "$rc" != 0 ]; then

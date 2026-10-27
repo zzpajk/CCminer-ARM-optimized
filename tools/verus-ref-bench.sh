@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# verus-ref-bench.sh v4.2 (Termux, or Ubuntu/Debian arm64 such as UserLAnd) - build named Verushash variants of Oink70/CCminer-ARM-optimized,
+# verus-ref-bench.sh v4.3 (Termux, or Ubuntu/Debian arm64 such as UserLAnd) - build named Verushash variants of Oink70/CCminer-ARM-optimized,
 # prove they match the baseline on THIS CPU, then benchmark them side by side.
 #
 # Variants (each prints its name in the miner banner):
@@ -21,7 +21,9 @@
 #   <variant>-cNN  the same code built with clang NN (e.g. x2percorep-c15) from /usr/lib/llvm-NN, installed
 #              from the distribution if missing (clang-NN lld-NN llvm-NN), else from LLVM's apt repository
 #              (apt.llvm.org, added once). Combines: x2percorep-c17-pgo.
-#   <variant>-gcc  the same code built with GCC (same flags translated; LTO via gcc-ar)
+#   <variant>-gcc  the same code built with GCC 12 or newer (same flags translated; LTO via gcc-ar). Older GCC
+#              cannot build it (no __builtin_shufflevector); the variant is skipped if no GCC >= 12 is available.
+#   A compiler variant (-cNN, -gcc) that fails to build is dropped with a note; the run continues.
 #
 # In-order cores (plain loop under x2auto/x2percore): Cortex-A34/A35/A53/A55/A510/A520 and Qualcomm Kryo Silver.
 # Embedded patch = git diff 9ea69fd..4c7326e of github.com/zzpajk/CCminer-ARM-optimized (branch variants).
@@ -189,11 +191,18 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
     # (a prebuilt ccminer and *.o files). Regenerating with autogen fails on current autoconf, and is
     # not needed, so use the shipped configure as-is but delete every old build product first so nothing
     # stale is linked. configure.sh is upstream's own flag set (clang, lld, -mtune=cortex-a53).
-    nn=$(vcc "$v"); CCD=""; GCCB=""
+    nn=$(vcc "$v"); CCD=""; GCCB=""; GSUF=""
     if vgcc "$v"; then
-      have gcc && have g++ || { $SUDO apt-get -o DPkg::Lock::Timeout=600 install -y gcc g++ 2>&1 | tail -1; }
-      have g++ || { echo "    skipped: g++ not installed"; VARIANTS=$(echo " $VARIANTS " | sed "s# $v # #; s#^ ##; s# \$##"); continue; }
-      GCCB=1; echo "    compiler: $(gcc --version | head -1)"
+      GV=""
+      for g in 14 13 12; do have "g++-$g" && have "gcc-$g" && { GV=$g; break; }; done
+      if [ -z "$GV" ] && have apt-get; then $SUDO apt-get -o DPkg::Lock::Timeout=600 install -y gcc-12 g++-12 2>&1 | tail -1; have g++-12 && GV=12; fi
+      if [ -z "$GV" ]; then gm=$(gcc -dumpversion 2>/dev/null | cut -d. -f1); [ "${gm:-0}" -ge 12 ] 2>/dev/null && GV=""; fi
+      if [ -z "$GV" ] && ! { have gcc && [ "$(gcc -dumpversion 2>/dev/null | cut -d. -f1)" -ge 12 ] 2>/dev/null; }; then
+        echo "    skipped: needs GCC 12 or newer (this system has $(gcc -dumpversion 2>/dev/null || echo none))"
+        VARIANTS=$(echo " $VARIANTS " | sed "s# $v # #; s#^ ##; s# \$##"); continue
+      fi
+      GCCB=1; GSUF="${GV:+-$GV}"
+      echo "    compiler: $(gcc${GV:+-$GV} --version | head -1)"
       vpgo "$v" && { echo "    skipped: -pgo is clang-only"; VARIANTS=$(echo " $VARIANTS " | sed "s# $v # #; s#^ ##; s# \$##"); continue; }
     fi
     if [ -n "$nn" ]; then
@@ -207,7 +216,7 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
       ( cd "$1" && find . -name '*.o' -delete && rm -f ccminer *.opt.yaml config.status && \
           { if [ -n "$CCD" ]; then sed -i "s#CXX=clang++ CC=clang#CXX=$CCD/clang++ CC=$CCD/clang#" configure.sh; fi; true; } && \
           { if [ -n "$GCCB" ]; then printf '%s\n' 'X="-O3 -ffast-math -mfix-cortex-a53-835769 -D_REENTRANT -falign-functions=16 -fomit-frame-pointer -fpic -pthread -flto=auto -fno-stack-protector -flax-vector-conversions"' \
-              './configure CC=gcc CXX=g++ AR=gcc-ar RANLIB=gcc-ranlib CFLAGS="-finline-functions -march=armv8-a+crypto -mtune=cortex-a53 $X" CXXFLAGS="-funroll-loops -finline-functions -march=armv8-a+crypto -mtune=cortex-a53 $X" LDFLAGS="-flto=auto"' > configure.sh; fi; true; } && \
+              "./configure CC=gcc$GSUF CXX=g++$GSUF AR=gcc-ar$GSUF RANLIB=gcc-ranlib$GSUF "'CFLAGS="-finline-functions -march=armv8-a+crypto -mtune=cortex-a53 $X" CXXFLAGS="-funroll-loops -finline-functions -march=armv8-a+crypto -mtune=cortex-a53 $X" LDFLAGS="-flto=auto"' > configure.sh; fi; true; } && \
           { if [ -n "$R" ]; then echo "$R" | tr '|' '\n' | while IFS= read -r f; do sed -i "s# $f##g" configure.sh; done; fi; true; } && \
           { if [ "$tn" = GENERIC ]; then sed -i 's# -mtune=cortex-a53##g' configure.sh; elif [ -n "$tn" ]; then sed -i "s#-mtune=cortex-a53#$tn#g" configure.sh; fi; true; } && \
           { if [ -n "$2" ]; then sed -i "s#^extracflags=\"#extracflags=\"$2 #" configure.sh && sed -i "s#LDFLAGS=\"-v -flto#LDFLAGS=\"-v -flto $2#" configure.sh; fi; true; } && \
@@ -239,6 +248,9 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
         *)        grep -q "baseline+$(vmarker "$vb")" "$d/ccminer" || { echo "  !! $v binary lacks the variant marker (stale objects?)"; exit 1; } ;;
       esac
       cp "$d/ccminer" "$BIN/ccminer-$v"
+    elif [ -n "$CCD" ] || [ -n "$GCCB" ]; then
+      echo "    !! build with this compiler failed; dropping $v. First errors:"; grep -E 'error|Error' "$BUILDLOG" | grep -v conftest | tail -6
+      VARIANTS=$(echo " $VARIANTS " | sed "s# $v # #; s#^ ##; s# \$##")
     else echo "BUILD FAILED for $v. First errors, then last 25 lines of $BUILDLOG:"; grep -m8 -E 'error|Error|cannot find|No such file' "$BUILDLOG"; echo ...; tail -25 "$BUILDLOG"
       [ -f "$d/config.log" ] && { echo "--- config.log (compiler test) ---"; grep -E '^(clang|ld\.lld|ld|/usr/bin/ld)[^ ]*: (error|warning)|unknown argument|cannot find|conftest' "$d/config.log" | grep -v '^ac_cv\|^[0-9]*:ac_' | tail -12; }
       echo "Send me the text above (and $BUILDLOG if you can)."; exit 1; fi
