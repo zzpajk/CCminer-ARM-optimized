@@ -142,7 +142,7 @@ run() {
 		light) envs="VERUS_LANES=2 VERUS_SEL=19";; selc) envs="VERUS_LANES=2 VERUS_SEL=35";; lightc) envs="VERUS_LANES=2 VERUS_SEL=51";;
 		bt) envs="VERUS_LANES=2 VERUS_SEL=99";; sel2bt) envs="VERUS_LANES=2 VERUS_SEL=67";; x2bt) envs="VERUS_LANES=2 VERUS_SEL=64";;
 		x2light) envs="VERUS_LANES=2 VERUS_SEL=16";; x2selc) envs="VERUS_LANES=2 VERUS_SEL=32";; x2lightc) envs="VERUS_LANES=2 VERUS_SEL=48";;
-		s[0-9]*) envs="VERUS_LANES=2 VERUS_SEL=${name#s}";;   # any instantiated SEL value, e.g. s419
+		s[0-9]*) envs="VERUS_LANES=2 VERUS_SEL=${name#s}"; [ -n "$BINP" ] && bin=$BINP;;   # any SEL value, e.g. s419; pristine binary (bit 128 needs it)
 		*) echo "0|unknown path $name"; return;;
 		default) envs="";; esac
 	local aff=""; [ "$mask" != none ] && aff="--cpu-affinity $mask"   # none: miner's own pinning (thread i on core i)
