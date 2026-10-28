@@ -67,8 +67,8 @@ default_path() {
 	if inorder "$1" "$2"; then echo plain
 	elif [ "$1" = 0x53 ]; then case "$2" in 0x001) echo s384;; *) echo s419;; esac
 	elif [ "$1:$2" = 0x41:0xd09 ]; then echo s384
-	elif [ "$1:$2" = 0x41:0xd0a ]; then echo s387
 	elif [ "$1:$2" = 0x41:0xd0b ]; then echo s483
+	elif [ "$1" = 0x41 ]; then echo s931
 	else echo s419; fi
 }
 
