@@ -65,6 +65,7 @@ default_path() {
 	elif [ "$1" = 0x53 ]; then case "$2" in 0x001) echo x2;; *) echo selc;; esac
 	elif [ "$1:$2" = 0x41:0xd09 ]; then echo x2
 	elif [ "$1:$2" = 0x41:0xd0a ]; then echo sel2
+	elif [ "$1:$2" = 0x41:0xd0b ]; then echo bt
 	else echo selc; fi
 }
 

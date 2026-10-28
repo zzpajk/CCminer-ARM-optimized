@@ -27,7 +27,8 @@
  *
  *   x2percore  VERUS_X2 VERUS_AUTO VERUS_PERCORE  per core at run time: plain loop on in-order cores,
  *                            x2 on Mongoose M1/M2 and Cortex-A73, x2sel2 on the A75, x2sel2 + branch-free
- *                            case 0x0c (SEL 35) on every other out-of-order core; VERUS_SEL overrides for testing
+ *                            case 0x0c (SEL 35) on every other out-of-order core, on the A76 also with
+ *                            branch-table dispatch (SEL 99); VERUS_SEL overrides for testing
  *
  *   x2sel3     VERUS_X2 VERUS_SEL3   x2sel2 plus case 0x14 with no branch at all (8 masked steps)
  *
