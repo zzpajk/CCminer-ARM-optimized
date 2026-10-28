@@ -290,6 +290,14 @@ static int verus_sel_for_cpu(int cpu)
 		/* ARM-designed out-of-order cores except A73/A76: also preload (512), on sel2+selc. Sweep vs 419:
 		 * A75 +3.2% (931 vs its 387: better too), A78 +1.8%, X1 +1.3%; Mongoose M3/M4/M5 -1..-3%, so not there. */
 		if (g_impl[cpu] == 0x41 && g_part[cpu] != 0xd09 && g_part[cpu] != 0xd0b) sel = 931;
+		/* Qualcomm Kryo Gold cores report implementer 0x51 but are Cortex derivatives: use the path of the
+		 * Cortex core they are built on. NOT measured yet (no such phone tested): 0x800 Kryo 280 Gold (A73,
+		 * SD835), 0x802 Kryo 385 Gold (A75, SD845 / 7xx), 0x804 Kryo 485 Gold (A76, SD855 / 7xx). */
+		if (g_impl[cpu] == 0x51) {
+			if (g_part[cpu] == 0x800) sel = 384;
+			else if (g_part[cpu] == 0x802) sel = 931;
+			else if (g_part[cpu] == 0x804) sel = 483;
+		}
 	}
 #ifdef VERUS_PERCORE3
 	sel |= 4;   /* x2percore3: also the fully branch-free case 0x14 on every out-of-order core */
