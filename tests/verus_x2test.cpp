@@ -45,7 +45,7 @@ int main(int argc, char **argv)
 		struct verus_lane L[4];
 		unsigned char *hp[4]; const unsigned char *np[4];
 		for (int l = 0; l < N; l++) {
-			L[l] = (struct verus_lane){ keyL[l], frL[l], freL[l], gpL[l], gpxL[l], bL[l] };
+			L[l] = (struct verus_lane){ keyL[l], frL[l], freL[l], gpL[l], gpxL[l], bL[l], key0 };   /* key0 = pristine copy (SEL bit 128) */
 			hp[l] = hL[l]; np[l] = nonce[l];
 		}
 		Verus2hash_xN<VERUS_LANES>(hp, L, np);

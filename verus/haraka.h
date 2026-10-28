@@ -344,6 +344,8 @@ void haraka256_8x(unsigned char *out, const unsigned char *in);
 void haraka512(unsigned char *out, const unsigned char *in);
 void haraka512_zero(unsigned char *out, const unsigned char *in);
 void haraka512_keyed(unsigned char *out, const unsigned char *in, const u128 *rc);
+void haraka512_keyed_x2(unsigned char *outA, const unsigned char *inA, const u128 *rA,
+		unsigned char *outB, const unsigned char *inB, const u128 *rB);
 void haraka512_4x(unsigned char *out, const unsigned char *in);
 void haraka512_8x(unsigned char *out, const unsigned char *in);
 

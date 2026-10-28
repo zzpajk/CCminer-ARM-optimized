@@ -41,7 +41,9 @@ static inline void verus_fixkey_pristine(const uint16_t * __restrict fixrand, co
  * bit 3: fused dispatch, one 64-way jump on the pair of cases per round (SEL 8, 9, 11),
  * bit 4: light merge, cases 0/4/8/0x1c as one branch-free body (5 jump targets instead of 8),
  * bit 5: case 0x0c without its 50/50 branch (SEL 16, 32, 48, 19, 35, 51 are instantiated),
- * bit 6: branch-table dispatch, no table load before the case jump resolves (SEL 64, 67, 99; AArch64 only).
+ * bit 6: branch-table dispatch, no table load before the case jump resolves (SEL 64, 67, 99; AArch64 only),
+ * bit 7 (128): no key journal in the rounds (caller restores from a pristine copy), bit 8 (256, handled in
+ * Verus2hash_xN): the two Haraka512 interleaved. Instantiated: 39 128 131 163 227 (+256 needs no new one).
  * The default comes from the build flags; x2percore picks it per core at run time. */
 #if defined(VERUS_SEL_FORCE)
 #  define VERUS_SEL_DEFAULT VERUS_SEL_FORCE   /* tests: any instantiated SEL value */

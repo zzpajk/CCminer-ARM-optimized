@@ -800,8 +800,10 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 		fixrandex[i] = (uint16_t) ((selector >>32) & keyMask);
 		__m128i *prand = randomsource + fixrand[i];
 		__m128i *prandex = randomsource + fixrandex[i];
-		g_prand[i] = *prand;
-		g_prandex[i] = *prandex;
+		if (!(SEL & 128)) {   /* bit 128: no journal, the caller restores from a pristine key copy */
+			g_prand[i] = *prand;
+			g_prandex[i] = *prandex;
+		}
 
 
 
@@ -1327,6 +1329,11 @@ template void verusclhash_port2_2_xN<2, 51>(void **, const unsigned char **, uin
 template void verusclhash_port2_2_xN<2, 64>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<2, 67>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<2, 99>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 39>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 128>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 131>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 163>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 227>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<3, 0>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<4, 0>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 /* BEGIN GENERATED x2fuse (tools/gen_fuse.py) */
