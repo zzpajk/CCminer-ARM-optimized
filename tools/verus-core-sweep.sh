@@ -14,6 +14,7 @@
 #   selc   sel2 + branch-free case 0x0c                       VERUS_LANES=2 VERUS_SEL=35
 #   lightc sel2 + both                                        VERUS_LANES=2 VERUS_SEL=51
 #   x2light / x2selc / x2lightc  the same on top of plain x2  VERUS_SEL=16 / 32 / 48
+#   bt / sel2bt / x2bt  selc / sel2 / x2 with branch-table dispatch (no table load)  VERUS_SEL=99 / 67 / 64
 # (-P chooses which two-nonce paths run; default: x2 sel sel2 fuse fuse2)
 # and compares the winner with what x2percore picks by default for that core type today.
 # Optionally (-a) it also runs all cores: x2percore default vs plain everywhere.
@@ -137,6 +138,7 @@ run() {
 	case "$name" in plain) envs="VERUS_LANES=1";; plainp) envs="VERUS_LANES=1"; bin=$BINP;; x2) envs="VERUS_LANES=2 VERUS_SEL=0";; sel) envs="VERUS_LANES=2 VERUS_SEL=1";;
 		sel2) envs="VERUS_LANES=2 VERUS_SEL=3";; fuse) envs="VERUS_LANES=2 VERUS_SEL=8";; fuse2) envs="VERUS_LANES=2 VERUS_SEL=11";;
 		light) envs="VERUS_LANES=2 VERUS_SEL=19";; selc) envs="VERUS_LANES=2 VERUS_SEL=35";; lightc) envs="VERUS_LANES=2 VERUS_SEL=51";;
+		bt) envs="VERUS_LANES=2 VERUS_SEL=99";; sel2bt) envs="VERUS_LANES=2 VERUS_SEL=67";; x2bt) envs="VERUS_LANES=2 VERUS_SEL=64";;
 		x2light) envs="VERUS_LANES=2 VERUS_SEL=16";; x2selc) envs="VERUS_LANES=2 VERUS_SEL=32";; x2lightc) envs="VERUS_LANES=2 VERUS_SEL=48";;
 		*) echo "0|unknown path $name"; return;;
 		default) envs="";; esac

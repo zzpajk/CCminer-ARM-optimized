@@ -1248,6 +1248,34 @@ void verusclhash_port2_2_xN(void **random, const unsigned char **buf, uint64_t k
 		pc[l][0] = _mm_xor_si128(a[0], a[2]); pc[l][1] = _mm_xor_si128(a[1], a[3]); pc[l][2] = a[2]; pc[l][3] = a[3];
 		acc[l] = _mm_load_si128_emu(rs[l] + (keyMask + 2));
 	}
+#if defined(__aarch64__)
+	if (N == 2 && (SEL & 64)) {
+		/* SEL bit 6 (64): branch-table dispatch. A jump table needs a load of the table entry before the
+		 * indirect jump can resolve, and that load sits on the path of every mispredict (~7 of 8 rounds).
+		 * Here the jump goes to base + 4 * case, where each slot is a direct branch to that case's body
+		 * (the case is a compile-time constant there, so each body is specialised as in the fused path). */
+		constexpr int S = SEL & ~64;
+#define VERUS_BT_LANE(l, P) { \
+			const uint64_t idx = ((uint64_t)_mm_cvtsi128_si64_emu(acc[l]) >> 2) & 7; \
+			asm goto("adr x16, 1f\n\tadd x16, x16, %0, lsl #2\n\tbr x16\n1:\n\tb %l1\n\tb %l2\n\tb %l3\n\tb %l4\n\tb %l5\n\tb %l6\n\tb %l7\n\tb %l8\n" \
+				: : "r"(idx) : "x16" : P##0, P##1, P##2, P##3, P##4, P##5, P##6, P##7); \
+			P##0: verus_round_port2_2<S, 0x00>(acc[l], i, rs[l], pc[l], keyMask, fr[l], fre[l], gp[l], gpx[l]); goto P##d; \
+			P##1: verus_round_port2_2<S, 0x04>(acc[l], i, rs[l], pc[l], keyMask, fr[l], fre[l], gp[l], gpx[l]); goto P##d; \
+			P##2: verus_round_port2_2<S, 0x08>(acc[l], i, rs[l], pc[l], keyMask, fr[l], fre[l], gp[l], gpx[l]); goto P##d; \
+			P##3: verus_round_port2_2<S, 0x0c>(acc[l], i, rs[l], pc[l], keyMask, fr[l], fre[l], gp[l], gpx[l]); goto P##d; \
+			P##4: verus_round_port2_2<S, 0x10>(acc[l], i, rs[l], pc[l], keyMask, fr[l], fre[l], gp[l], gpx[l]); goto P##d; \
+			P##5: verus_round_port2_2<S, 0x14>(acc[l], i, rs[l], pc[l], keyMask, fr[l], fre[l], gp[l], gpx[l]); goto P##d; \
+			P##6: verus_round_port2_2<S, 0x18>(acc[l], i, rs[l], pc[l], keyMask, fr[l], fre[l], gp[l], gpx[l]); goto P##d; \
+			P##7: verus_round_port2_2<S, 0x1c>(acc[l], i, rs[l], pc[l], keyMask, fr[l], fre[l], gp[l], gpx[l]); \
+			P##d: ; }
+#pragma clang loop unroll(disable)
+		for (uint64_t i = 0; i < 32; i++) {
+			VERUS_BT_LANE(0, verus_bt_a)
+			VERUS_BT_LANE(N - 1, verus_bt_b)
+		}
+#undef VERUS_BT_LANE
+	} else
+#endif
 	if (N == 2 && (SEL & 8)) {
 		/* SEL bit 3: fused dispatch. One 64-way jump per round on the pair (case of lane 0, case of lane 1);
 		 * every pair is a straight-line block with both case bodies (as primo-arm-miner's x2f path). */
@@ -1296,6 +1324,9 @@ template void verusclhash_port2_2_xN<2, 48>(void **, const unsigned char **, uin
 template void verusclhash_port2_2_xN<2, 19>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<2, 35>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<2, 51>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 64>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 67>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 99>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<3, 0>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<4, 0>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 /* BEGIN GENERATED x2fuse (tools/gen_fuse.py) */

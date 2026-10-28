@@ -40,7 +40,8 @@ static inline void verus_fixkey_pristine(const uint16_t * __restrict fixrand, co
  * bit 2: case 0x14 entirely branch-free, all 8 steps computed and masked (variant x2sel3, used as SEL 7),
  * bit 3: fused dispatch, one 64-way jump on the pair of cases per round (SEL 8, 9, 11),
  * bit 4: light merge, cases 0/4/8/0x1c as one branch-free body (5 jump targets instead of 8),
- * bit 5: case 0x0c without its 50/50 branch (SEL 16, 32, 48, 19, 35, 51 are instantiated).
+ * bit 5: case 0x0c without its 50/50 branch (SEL 16, 32, 48, 19, 35, 51 are instantiated),
+ * bit 6: branch-table dispatch, no table load before the case jump resolves (SEL 64, 67, 99; AArch64 only).
  * The default comes from the build flags; x2percore picks it per core at run time. */
 #if defined(VERUS_SEL_FORCE)
 #  define VERUS_SEL_DEFAULT VERUS_SEL_FORCE   /* tests: any instantiated SEL value */
