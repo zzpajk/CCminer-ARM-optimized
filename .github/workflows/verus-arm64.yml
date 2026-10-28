@@ -116,6 +116,18 @@ jobs:
           ./ccminer-verus --version 2>&1 | grep -q 'Verus variant: x2percore+pristine'
           hs=$(./ccminer-verus -a verus --benchmark -t 1 --time-limit 10 --no-color 2>&1 | grep -E '^[0-9]+$' | tail -1)
           echo "build-verus.sh ok, 1T ${hs:-NONE} H/s" | tee -a difftest.txt
+      - name: API JSON output (summary.json / threads.json over HTTP and the plain socket)
+        run: |
+          ./ccminer-verus -a verus --benchmark -t 2 -b 127.0.0.1:4068 --no-color > api-miner.log 2>&1 &
+          MP=$!; sleep 8
+          curl -s -i http://127.0.0.1:4068/summary.json | tee api.txt | head -5
+          curl -s http://127.0.0.1:4068/summary.json | python3 -c 'import json,sys; d=json.load(sys.stdin); print("summary ok, KHS", d["KHS"])' | tee -a api.txt
+          curl -s http://127.0.0.1:4068/threads.json | python3 -c 'import json,sys; d=json.load(sys.stdin); print("threads ok,", len(d), "threads")' | tee -a api.txt
+          printf 'pool.json' | timeout 5 nc -q 2 127.0.0.1 4068 | tr -d '\000' | python3 -c 'import json,sys; json.load(sys.stdin); print("socket pool.json ok")' | tee -a api.txt
+          printf 'summary' | timeout 5 nc -q 2 127.0.0.1 4068 | tr -d '\000' | grep -q '^NAME=' && echo "plain summary unchanged" | tee -a api.txt
+          kill $MP
+          echo "api: $(grep -E 'ok|unchanged' api.txt | tr '\n' ';')" | tee -a difftest.txt
+          [ "$(grep -cE ' ok|unchanged' api.txt)" = 4 ]
       - name: Selector statistics
         run: |
           clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_STATS -I. -Iverus \

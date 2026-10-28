@@ -8,7 +8,7 @@
  * Software Foundation; either version 2 of the License, or (at your option)
  * any later version.  See COPYING for more details.
  */
-#define APIVERSION "1.9"
+#define APIVERSION "1.9.1"   /* 1.9.1: "<command>.json" JSON replies */
 
 #ifdef WIN32
 # define  _WINSOCK_DEPRECATED_NO_WARNINGS
@@ -515,6 +515,96 @@ static char *gethelp(char *params)
 }
 
 /*****************************************************************************/
+
+/* JSON output: any command name + ".json" (e.g. "summary.json", "threads.json", "pool.json|1",
+ * HTTP "GET /histo.json") returns the same data as JSON instead of "KEY=VAL;KEY=VAL|" records.
+ * Values that are plain numbers stay numbers, everything else becomes a string. summary, pool and
+ * meminfo give one object, the other commands an array of objects (help: an array of names). */
+static char json_buf[MYBUFSIZ * 2 + 64];
+
+static size_t json_put_str(char *o, size_t left, const char *v, size_t n)
+{
+	size_t k = 0;
+	if (left < 3) return 0;
+	o[k++] = '"';
+	for (size_t i = 0; i < n && k + 8 < left; i++) {
+		unsigned char ch = (unsigned char) v[i];
+		if (ch == '"' || ch == '\\') { o[k++] = '\\'; o[k++] = (char) ch; }
+		else if (ch < 0x20) k += snprintf(o + k, left - k, "\\u%04x", ch);
+		else o[k++] = (char) ch;
+	}
+	o[k++] = '"';
+	return k;
+}
+
+static bool json_is_number(const char *v, size_t n)
+{
+	if (!n || n > 40) return false;
+	if (!(v[0] == '-' || (v[0] >= '0' && v[0] <= '9'))) return false;
+	if (n > 1 && v[0] == '0' && v[1] >= '0' && v[1] <= '9') return false;   /* leading zero: keep as text */
+	char tmp[48]; memcpy(tmp, v, n); tmp[n] = '\0';
+	char *end; strtod(tmp, &end);
+	return *end == '\0';
+}
+
+static char *api_to_json(const char *cmd, const char *in)
+{
+	const bool single = !strcmp(cmd, "summary") || !strcmp(cmd, "pool") || !strcmp(cmd, "meminfo");
+	const bool names = !strcmp(cmd, "help");
+	char *o = json_buf; size_t left = sizeof(json_buf) - 4, k = 0;
+	int nrec = 0;
+	if (!in) in = "";
+	if (!single) o[k++] = '[';
+	const char *r = in;
+	while (*r && k + 64 < left) {
+		const char *re = strchr(r, '|'); if (!re) re = r + strlen(r);
+		if (re > r) {
+			if (names) {
+				/* help: one name per line */
+				const char *f = r;
+				while (f < re && k + 64 < left) {
+					const char *fe = f; while (fe < re && *fe != '\n') fe++;
+					if (fe > f) { if (nrec++) o[k++] = ','; k += json_put_str(o + k, left - k, f, (size_t)(fe - f)); }
+					f = fe + 1;
+				}
+			} else {
+				if (single && nrec) break;   /* only the first record */
+				if (nrec++) o[k++] = ',';
+				o[k++] = '{';
+				int nf = 0; const char *f = r;
+				while (f < re && k + 64 < left) {
+					const char *fe = f; while (fe < re && *fe != ';') fe++;
+					const char *eq = (const char *) memchr(f, '=', (size_t)(fe - f));
+					if (eq && eq > f) {
+						if (nf++) o[k++] = ',';
+						k += json_put_str(o + k, left - k, f, (size_t)(eq - f));
+						o[k++] = ':';
+						const char *v = eq + 1; size_t vn = (size_t)(fe - v);
+						if (json_is_number(v, vn) && k + vn + 4 < left) { memcpy(o + k, v, vn); k += vn; }
+						else k += json_put_str(o + k, left - k, v, vn);
+					}
+					f = fe + 1;
+				}
+				o[k++] = '}';
+			}
+		}
+		if (!*re) break;
+		r = re + 1;
+	}
+	if (single && !nrec) { o[k++] = '{'; o[k++] = '}'; }
+	if (!single) o[k++] = ']';
+	o[k] = '\0';
+	return json_buf;
+}
+
+static int send_http_json(SOCKETTYPE c, const char *body)
+{
+	char head[192];
+	int hl = snprintf(head, sizeof(head), "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+		"Content-Length: %u\r\nConnection: close\r\n\r\n", (unsigned) strlen(body));
+	send(c, head, hl, 0);
+	return send(c, body, (int) strlen(body), 0);
+}
 
 static int send_result(SOCKETTYPE c, char *result)
 {
@@ -1292,6 +1382,11 @@ static void api()
 				if (params != NULL)
 					*(params++) = '\0';
 
+				/* "<command>.json": same command, JSON reply */
+				bool json = false;
+				size_t bl = strlen(buf);
+				if (bl > 5 && strcmp(buf + bl - 5, ".json") == 0) { buf[bl - 5] = '\0'; json = true; }
+
 				if (opt_debug && opt_protocol && n > 0)
 					applog(LOG_DEBUG, "API: exec command %s(%s)", buf, params ? params : "");
 
@@ -1303,11 +1398,16 @@ static void api()
 								params[strlen(params)-1] = '\0';
 						}
 						result = (cmds[i].func)(params);
+						if (json)
+							result = api_to_json(cmds[i].name, result);
 						if (wskey) {
 							websocket_handshake(c, result, wskey);
 							break;
 						}
-						send_result(c, result);
+						if (json && msg)
+							send_http_json(c, result);   /* plain HTTP GET: a real HTTP response */
+						else
+							send_result(c, result);
 						break;
 					}
 				}
