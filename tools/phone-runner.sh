@@ -20,7 +20,7 @@
 #   timeout=<minutes>                    optional, default 240
 # Results (written by the phone):         results/NAME/<id>/{status,console.log,report.txt}, results/NAME/heartbeat.txt
 set -u
-RUNNER_VERSION=1.6.1
+RUNNER_VERSION=1.6.2
 JOBS_REPO="${VERUS_JOBS_REPO:-git@github.com:zzpajk/verus-phone-jobs.git}"
 FORK="${VERUS_FORK:-https://github.com/zzpajk/CCminer-ARM-optimized.git}"
 CONF="$HOME/.verus-runner.conf"
@@ -135,6 +135,9 @@ run_job() { # job-file
 		  for c in /sys/devices/system/cpu/cpu[0-9]*; do echo "  ${c##*/} max=$(cat $c/cpufreq/cpuinfo_max_freq 2>/dev/null) cur=$(cat $c/cpufreq/scaling_cur_freq 2>/dev/null)"; done
 		  echo "battery: $(cat /sys/class/power_supply/battery/capacity 2>/dev/null)% $(cat /sys/class/power_supply/battery/status 2>/dev/null) temp=$(cat /sys/class/power_supply/battery/temp 2>/dev/null)"
 		  echo "free: $(free -m 2>/dev/null | awk 'NR==2{print $2" MB total, "$7" MB available"}')  disk: $(df -h "$HOME" | awk 'NR==2{print $4" free"}')"
+		  echo "allowed cpus: $(grep -m1 Cpus_allowed_list /proc/self/status | awk '{print $2}')  (nproc $(nproc 2>/dev/null))"
+		  echo "cpuset: $(cat /proc/self/cpuset 2>/dev/null)  cgroup: $(grep -m3 . /proc/self/cgroup 2>/dev/null | tr '\n' ' ')"
+		  for g in top-app foreground background system-background restricted; do [ -r /dev/cpuset/$g/cpus ] && echo "  /dev/cpuset/$g/cpus = $(cat /dev/cpuset/$g/cpus)"; done
 		  pgrep -fa ccminer || echo "no ccminer running"
 		} > "$R/console.log" 2>&1; rc=0;;
 	led)
