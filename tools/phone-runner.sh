@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
-# phone-runner.sh v1.4 - lets Claude queue Verus benchmark jobs for this phone through a private GitHub repo.
+# phone-runner.sh v1.6 - lets Claude queue Verus benchmark jobs for this phone through a private GitHub repo.
 #
 # The phone polls the jobs repo (git over SSH with a deploy key that can only reach that one repo), runs
 # each new job for this phone and commits the output back. A job can ONLY run one of the scripts in
 # tools/ of the public fork (github.com/zzpajk/CCminer-ARM-optimized) at a pinned commit, with arguments
 # from a fixed character set; nothing from the job file is ever evaluated as shell code.
 #
-#   bash phone-runner.sh setup NAME   one-time: key, deploy-key check, clone, config, start (NAME = s8, s20, ...)
+#   bash phone-runner.sh setup NAME [DEVICE]   one-time: key, deploy-key check, clone, config, start
+#        NAME = s8, s20, ... ; a second environment on the same phone (e.g. Termux next to UserLAnd) gets its
+#        own NAME (s20-tx) and the same DEVICE (s20; default: NAME without a trailing -tx). Runners with the
+#        same DEVICE never run jobs at the same time: a job first takes locks/DEVICE in the jobs repo.
+#        Termux: the runner holds a wake lock; with the Termux:Boot app it also starts after a reboot.
 #   bash phone-runner.sh start|stop|status|log
 #
 # Jobs repo layout (written by Claude):    jobs/NAME/<id>.job
@@ -16,7 +20,7 @@
 #   timeout=<minutes>                    optional, default 240
 # Results (written by the phone):         results/NAME/<id>/{status,console.log,report.txt}, results/NAME/heartbeat.txt
 set -u
-RUNNER_VERSION=1.5
+RUNNER_VERSION=1.6
 JOBS_REPO="${VERUS_JOBS_REPO:-git@github.com:zzpajk/verus-phone-jobs.git}"
 FORK="${VERUS_FORK:-https://github.com/zzpajk/CCminer-ARM-optimized.git}"
 CONF="$HOME/.verus-runner.conf"
@@ -41,6 +45,44 @@ push_results() { # message
 		git push -q origin HEAD:main >/dev/null 2>&1 && exit 0
 		sleep $((i * 5))
 	  done; exit 1 ) || say "push failed ($1), will retry with the next push"
+}
+
+# ---- per-device lock in the jobs repo (environments of one phone cannot see each other's processes) ----
+lock_file() { echo "$DIR/locks/$DEVICE"; }
+lock_commit() { # message: commit + push only locks/DEVICE; 0 if pushed
+	( cd "$DIR" || exit 1
+	  git add -A "locks/$DEVICE" >/dev/null 2>&1
+	  git diff --cached --quiet && exit 0
+	  git -c user.name="$PHONE" -c user.email="$PHONE@phones.invalid" commit -qm "$PHONE: $1" || exit 1
+	  git push -q origin HEAD:main >/dev/null 2>&1 && exit 0
+	  git reset -q --hard HEAD~1 >/dev/null 2>&1; exit 1 )   # drop only this lock commit, then look again
+}
+lock_acquire() { # timeout-minutes
+	local exp waited=0 owner until
+	while :; do
+		( cd "$DIR" && git pull -q --rebase --autostash origin main ) >/dev/null 2>&1 || git -C "$DIR" rebase --abort >/dev/null 2>&1
+		if [ -f "$(lock_file)" ]; then
+			read -r owner until < "$(lock_file)"
+			if [ "$owner" != "$PHONE" ] && [ "${until:-0}" -gt "$(date +%s)" ] 2>/dev/null; then
+				[ $waited = 0 ] && say "device $DEVICE busy ($owner until $(date -d @"$until" '+%T' 2>/dev/null || echo "$until")), waiting"
+				waited=1; sleep 60; continue
+			fi
+		fi
+		exp=$(( $(date +%s) + ($1 + 30) * 60 ))
+		mkdir -p "$DIR/locks"; echo "$PHONE $exp" > "$(lock_file)"
+		lock_commit "lock $DEVICE" && return 0
+		sleep $((RANDOM % 20 + 5))   # someone else pushed first: look again
+	done
+}
+lock_release() {
+	local owner until
+	( cd "$DIR" && git pull -q --rebase --autostash origin main ) >/dev/null 2>&1 || git -C "$DIR" rebase --abort >/dev/null 2>&1
+	[ -f "$(lock_file)" ] || return 0
+	read -r owner until < "$(lock_file)"
+	[ "$owner" = "$PHONE" ] || return 0
+	rm -f "$(lock_file)"
+	for i in 1 2 3; do lock_commit "unlock $DEVICE" && return 0; ( cd "$DIR" && git pull -q --rebase origin main ) >/dev/null 2>&1; [ -f "$(lock_file)" ] || return 0; rm -f "$(lock_file)"; done
+	say "could not release locks/$DEVICE (expires by itself)"
 }
 
 valid_arg() { case "$1" in *[!A-Za-z0-9\ ._,:=+/-]*) return 1;; esac; return 0; }
@@ -78,6 +120,8 @@ run_job() { # job-file
 
 	# never run on top of a benchmark someone started by hand
 	while pgrep -f 'ccminer.*--benchmark' >/dev/null 2>&1; do say "a benchmark is already running, waiting"; sleep 60; done
+	# and never at the same time as another environment of this phone (info jobs need no lock)
+	[ "$script" != info ] && lock_acquire "$tmo"
 
 	echo "running $(date '+%F %T') runner $RUNNER_VERSION" > "$R/status"
 	push_results "job $id started"
@@ -100,6 +144,7 @@ run_job() { # job-file
 		path=$(fetch_script "$commit" phone-runner.sh) && bash -n "$path" && cp "$path" "$SELF" && chmod +x "$SELF" \
 			&& echo "updated to $(grep -m1 '^RUNNER_VERSION=' "$SELF")" > "$R/console.log" || { echo "update failed" > "$R/console.log"; rc=1; }
 		echo "$([ $rc = 0 ] && echo done || echo failed) $(date '+%F %T') rc=$rc" > "$R/status"; push_results "job $id finished"
+		lock_release
 		[ $rc = 0 ] && { say "restarting with the new runner"; exec bash "$SELF" loop; }
 		return;;
 	bench|sweep)
@@ -130,6 +175,7 @@ run_job() { # job-file
 	esac
 	echo "$([ "$rc" = 0 ] && echo done || echo failed) $(date '+%F %T') rc=$rc" > "$R/status"
 	push_results "job $id finished rc=$rc"
+	[ "$script" != info ] && lock_release
 	say "job $id finished rc=$rc"
 }
 
@@ -143,9 +189,12 @@ heartbeat() {
 
 loop() {
 	. "$CONF" || { echo "no $CONF, run setup first"; exit 1; }
+	DEVICE=${DEVICE:-${PHONE%-tx}}
 	echo $$ > "$PIDF"
+	command -v termux-wake-lock >/dev/null 2>&1 && termux-wake-lock   # Termux: keep the CPU awake
 	git -C "$DIR" config user.name "$PHONE"; git -C "$DIR" config user.email "$PHONE@phones.invalid"
-	say "runner $RUNNER_VERSION for $PHONE started (pid $$)"
+	say "runner $RUNNER_VERSION for $PHONE (device $DEVICE) started (pid $$)"
+	lock_release   # a lock left by this runner before a crash or restart
 	local last_hb=0 now
 	while :; do
 		( cd "$DIR" && git pull -q --rebase --autostash origin main ) >/dev/null 2>&1 || { say "pull failed (network?)"; git -C "$DIR" rebase --abort >/dev/null 2>&1; }
@@ -161,8 +210,13 @@ loop() {
 
 case "${1:-}" in
 setup)
-	PHONE=${2:-}; case "$PHONE" in ''|*[!a-z0-9-]*) echo "usage: bash phone-runner.sh setup NAME   (NAME: lowercase letters/digits, e.g. s8)"; exit 1;; esac
-	for c in git ssh ssh-keygen; do command -v $c >/dev/null || { echo "missing $c (sudo apt-get install git openssh-client)"; exit 1; }; done
+	PHONE=${2:-}; case "$PHONE" in ''|*[!a-z0-9-]*) echo "usage: bash phone-runner.sh setup NAME [DEVICE]   (lowercase letters/digits/-, e.g. s8 or s8-tx)"; exit 1;; esac
+	DEVICE=${3:-${PHONE%-tx}}; case "$DEVICE" in ''|*[!a-z0-9-]*) echo "bad DEVICE: $DEVICE"; exit 1;; esac
+	TERMUX=0; case "${PREFIX:-}" in *com.termux*) TERMUX=1;; esac
+	if [ $TERMUX = 1 ]; then
+		for c in git ssh ssh-keygen pgrep setsid; do command -v $c >/dev/null || { echo "installing tools..."; pkg install -y git openssh procps util-linux termux-tools >/dev/null 2>&1; break; }; done
+	fi
+	for c in git ssh ssh-keygen; do command -v $c >/dev/null || { echo "missing $c (sudo apt-get install git openssh-client, or in Termux: pkg install git openssh)"; exit 1; }; done
 	[ "$(readlink -f "$0")" != "$(readlink -f "$SELF")" ] && cp "$0" "$SELF" && chmod +x "$SELF"
 	mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
 	[ -f "$KEY" ] || ssh-keygen -q -t ed25519 -N "" -C "verus-jobs-$PHONE" -f "$KEY"
@@ -171,7 +225,13 @@ setup)
 	until git ls-remote "$JOBS_REPO" >/dev/null 2>&1; do read -r -p "Press Enter once the key is added (Ctrl-C to stop)... " _ </dev/tty; done
 	echo "Key works."
 	[ -d "$DIR/.git" ] || git clone -q "$JOBS_REPO" "$DIR" || { echo "clone failed"; exit 1; }
-	echo "PHONE=$PHONE" > "$CONF"
+	printf 'PHONE=%s\nDEVICE=%s\n' "$PHONE" "$DEVICE" > "$CONF"
+	if [ $TERMUX = 1 ]; then
+		mkdir -p "$HOME/.termux/boot"
+		printf '#!/data/data/com.termux/files/usr/bin/sh\ntermux-wake-lock\nbash %s start\n' "$SELF" > "$HOME/.termux/boot/verus-runner.sh"
+		chmod +x "$HOME/.termux/boot/verus-runner.sh"
+		echo "Termux: autostart script in ~/.termux/boot (needs the Termux:Boot app, opened once)."
+	fi
 	running && kill "$(cat "$PIDF")" 2>/dev/null
 	nohup setsid bash "$SELF" loop >> "$LOGF" 2>&1 < /dev/null &
 	sleep 2; running && echo "Runner started for $PHONE (log: $LOGF). It survives logging out of SSH; after a phone reboot run: bash $SELF start" \
