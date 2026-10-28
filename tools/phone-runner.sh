@@ -20,7 +20,7 @@
 #   timeout=<minutes>                    optional, default 240
 # Results (written by the phone):         results/NAME/<id>/{status,console.log,report.txt}, results/NAME/heartbeat.txt
 set -u
-RUNNER_VERSION=1.6
+RUNNER_VERSION=1.6.1
 JOBS_REPO="${VERUS_JOBS_REPO:-git@github.com:zzpajk/verus-phone-jobs.git}"
 FORK="${VERUS_FORK:-https://github.com/zzpajk/CCminer-ARM-optimized.git}"
 CONF="$HOME/.verus-runner.conf"
@@ -200,7 +200,7 @@ loop() {
 		( cd "$DIR" && git pull -q --rebase --autostash origin main ) >/dev/null 2>&1 || { say "pull failed (network?)"; git -C "$DIR" rebase --abort >/dev/null 2>&1; }
 		for f in $(ls "$DIR/jobs/$PHONE"/*.job 2>/dev/null | sort); do
 			[ -f "$DIR/results/$PHONE/$(basename "$f" .job)/status" ] && continue
-			run_job "$f"; last_hb=$(date +%s)
+			run_job "$f"; lock_release; last_hb=$(date +%s)   # release also after early failures (no-op if not held)
 		done
 		now=$(date +%s)
 		[ $((now - last_hb)) -ge 1800 ] && { heartbeat; last_hb=$now; }
