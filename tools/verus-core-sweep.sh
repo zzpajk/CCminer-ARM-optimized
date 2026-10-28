@@ -71,8 +71,8 @@ default_path() {
 	elif [ "$1:$2" = 0x41:0xd09 ]; then echo s384
 	elif [ "$1:$2" = 0x41:0xd0b ] || [ "$1:$2" = 0x51:0x804 ]; then echo s483
 	elif [ "$1:$2" = 0x51:0x800 ]; then echo s384
-	elif [ "$1:$2" = 0x51:0x802 ]; then echo s931
-	elif [ "$1" = 0x41 ]; then echo s931
+	elif [ "$1:$2" = 0x51:0x802 ]; then echo s483
+	elif [ "$1" = 0x41 ]; then echo s483
 	else echo s419; fi
 }
 

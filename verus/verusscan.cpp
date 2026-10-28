@@ -287,15 +287,16 @@ static int verus_sel_for_cpu(int cpu)
 		 * the paths above: A76 +4.2%, M3 +3.6%, X1 +3.4%, M5 +2.7/+3.2%, M4 +2.7%, A78 +1.9%, M2 +1.8%,
 		 * A75 +1.5%. (128 is dropped below when the build has no pristine key copy.) */
 		sel |= 256 | 128;
-		/* ARM-designed out-of-order cores except A73/A76: also preload (512), on sel2+selc. Sweep vs 419:
-		 * A75 +3.2% (931 vs its 387: better too), A78 +1.8%, X1 +1.3%; Mongoose M3/M4/M5 -1..-3%, so not there. */
-		if (g_impl[cpu] == 0x41 && g_part[cpu] != 0xd09 && g_part[cpu] != 0xd0b) sel = 931;
+		/* ARM-designed out-of-order cores except the A73: branch table + 384 (483), as the A76. Built with clang 17
+		 * (what build-verus.sh uses) 483 beats preload (931) on A75 +3.9%, X1 +3.1%, A78 +1.9% (sweep -C 17);
+		 * with clang 14 preload had looked better (A75 +3.2%, A78 +1.8%, X1 +1.3% over 419). Mongoose: 419. */
+		if (g_impl[cpu] == 0x41 && g_part[cpu] != 0xd09) sel = 483;
 		/* Qualcomm Kryo Gold cores report implementer 0x51 but are Cortex derivatives: use the path of the
 		 * Cortex core they are built on. NOT measured yet (no such phone tested): 0x800 Kryo 280 Gold (A73,
 		 * SD835), 0x802 Kryo 385 Gold (A75, SD845 / 7xx), 0x804 Kryo 485 Gold (A76, SD855 / 7xx). */
 		if (g_impl[cpu] == 0x51) {
 			if (g_part[cpu] == 0x800) sel = 384;
-			else if (g_part[cpu] == 0x802) sel = 931;
+			else if (g_part[cpu] == 0x802) sel = 483;
 			else if (g_part[cpu] == 0x804) sel = 483;
 		}
 	}
