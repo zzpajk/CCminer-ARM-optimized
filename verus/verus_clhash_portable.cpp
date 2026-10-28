@@ -1277,7 +1277,7 @@ void verusclhash_port2_2_xN(void **random, const unsigned char **buf, uint64_t k
 		acc[l] = _mm_load_si128_emu(rs[l] + (keyMask + 2));
 	}
 #if defined(__aarch64__)
-	if (N == 2 && (SEL & 64)) {
+	if ((N == 1 || N == 2) && (SEL & 64)) {
 		/* SEL bit 6 (64): branch-table dispatch. A jump table needs a load of the table entry before the
 		 * indirect jump can resolve, and that load sits on the path of every mispredict (~7 of 8 rounds).
 		 * Here the jump goes to base + 4 * case, where each slot is a direct branch to that case's body
@@ -1299,7 +1299,7 @@ void verusclhash_port2_2_xN(void **random, const unsigned char **buf, uint64_t k
 		uint64_t i = 0;
 	verus_bt_loop:
 		VERUS_BT_LANE(0, verus_bt_a)
-		VERUS_BT_LANE(N - 1, verus_bt_b)
+		if (N == 2) { VERUS_BT_LANE(N - 1, verus_bt_b) }
 		if (++i < 32) goto verus_bt_loop;
 #undef VERUS_BT_LANE
 	} else
@@ -1366,6 +1366,17 @@ template void verusclhash_port2_2_xN<2, 547>(void **, const unsigned char **, ui
 template void verusclhash_port2_2_xN<2, 640>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<2, 643>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<2, 675>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+/* one lane (single-nonce cores through the same round code, VERUS_SEL1) */
+template void verusclhash_port2_2_xN<1, 128>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<1, 129>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<1, 130>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<1, 131>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<1, 160>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<1, 163>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<1, 192>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<1, 224>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<1, 640>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<1, 672>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<3, 0>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<4, 0>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 /* BEGIN GENERATED x2fuse (tools/gen_fuse.py) */

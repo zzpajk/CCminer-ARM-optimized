@@ -34,11 +34,12 @@
 #   -a  also run the all-core comparison    -A  also test the x2 paths on in-order cores (normally skipped)
 #   -P  two-nonce paths to run, e.g. -P "sel2 light selc lightc"
 #   -Q  also run plainq (single-nonce loop + preload) on every core type
+#   -L  extra single-nonce paths for in-order cores, e.g. -L "q128 q160 q192" (qN: VERUS_SEL1=N)
 set -u
-DUR=20; ROUNDS=2; COOL=8; BIN=""; BINP=""; BRANCH="variants"; ALLCORE=0; ALLINORDER=0; XPATHS="x2 sel sel2 fuse fuse2"; PLQ=""
+DUR=20; ROUNDS=2; COOL=8; BIN=""; BINP=""; BRANCH="variants"; ALLCORE=0; ALLINORDER=0; XPATHS="x2 sel sel2 fuse fuse2"; PLQ=""; LPATHS=""
 REPO="https://github.com/zzpajk/CCminer-ARM-optimized.git"
-while getopts "d:r:c:b:p:B:P:QaAh" o; do
-	case "$o" in d) DUR=$OPTARG;; r) ROUNDS=$OPTARG;; c) COOL=$OPTARG;; b) BIN=$OPTARG;; p) BINP=$OPTARG;; B) BRANCH=$OPTARG;; P) XPATHS=$OPTARG;; Q) PLQ=1;;
+while getopts "d:r:c:b:p:B:P:L:QaAh" o; do
+	case "$o" in d) DUR=$OPTARG;; r) ROUNDS=$OPTARG;; c) COOL=$OPTARG;; b) BIN=$OPTARG;; p) BINP=$OPTARG;; B) BRANCH=$OPTARG;; P) XPATHS=$OPTARG;; L) LPATHS=$OPTARG;; Q) PLQ=1;;
 		a) ALLCORE=1;; A) ALLINORDER=1;; *) sed -n '2,34p' "$0"; exit 0;; esac
 done
 WORK="${VERUS_SWEEP_DIR:-$HOME/verus-sweep}"
@@ -145,6 +146,7 @@ run() {
 		bt) envs="VERUS_LANES=2 VERUS_SEL=99";; sel2bt) envs="VERUS_LANES=2 VERUS_SEL=67";; x2bt) envs="VERUS_LANES=2 VERUS_SEL=64";;
 		x2light) envs="VERUS_LANES=2 VERUS_SEL=16";; x2selc) envs="VERUS_LANES=2 VERUS_SEL=32";; x2lightc) envs="VERUS_LANES=2 VERUS_SEL=48";;
 		plainq) envs="VERUS_LANES=1 VERUS_PRE1=1"; bin=$BINP;;   # single-nonce pristine loop + preload
+		q[0-9]*) envs="VERUS_LANES=1 VERUS_SEL1=${name#q}"; bin=$BINP;;   # one lane through the round code, SEL N
 		s[0-9]*) envs="VERUS_LANES=2 VERUS_SEL=${name#s}"; [ -n "$BINP" ] && bin=$BINP;;   # any SEL value, e.g. s419; pristine binary (bit 128 needs it)
 		*) echo "0|unknown path $name"; return;;
 		default) envs="";; esac
@@ -158,7 +160,7 @@ hexmask() { local m=0 c; for c in "$@"; do m=$((m | (1 << c))); done; printf '0x
 
 declare -A SUM CNT PATHSEEN
 total=0
-PL="plain"; [ -n "$BINP" ] && PL="plain plainp${PLQ:+ plainq}"
+PL="plain"; [ -n "$BINP" ] && PL="plain plainp${PLQ:+ plainq}${LPATHS:+ $LPATHS}"
 npl=$(echo $PL | wc -w)
 nxp=$(echo $XPATHS | wc -w)
 for k in "${TYPES[@]}"; do inorder ${k%:*} ${k#*:} && [ $ALLINORDER = 0 ] && total=$((total + npl)) || total=$((total + npl + nxp)); done
@@ -200,12 +202,12 @@ done
 avg() { [ "${CNT[$1]:-0}" -gt 0 ] && echo $(( SUM[$1] / CNT[$1] )) || echo 0; }
 pct() { awk -v a="$1" -v b="$2" 'BEGIN { if (b > 0) printf "%+.1f%%", (a / b - 1) * 100; else printf "n/a" }'; }
 say ""; say "================ RESULT (1 thread per core type, mean of $ROUNDS round(s), ${DUR}s runs) ================"
-hdr=$(printf '%-18s %-9s %10s %9s' "core type" "id" "plain" "pristine"); [ -n "$PLQ" ] && hdr="$hdr $(printf '%9s' plainq)"; for p in $XPATHS; do hdr="$hdr $(printf '%9s' "$p")"; done
+hdr=$(printf '%-18s %-9s %10s %9s' "core type" "id" "plain" "pristine"); [ -n "$PLQ" ] && hdr="$hdr $(printf '%9s' plainq)"; for p in $LPATHS $XPATHS; do hdr="$hdr $(printf '%9s' "$p")"; done
 printf '%s   %-6s %-8s %s\n' "$hdr" "best" "default" "verdict"
 for k in "${TYPES[@]}"; do
 	name=$(partname ${k%:*} ${k#*:}); def=$(default_path ${k%:*} ${k#*:})
 	pl=$(avg "$k/plain"); best=plain; bh=$pl; cells=""
-	for p in plainp ${PLQ:+plainq} $XPATHS; do
+	for p in plainp ${PLQ:+plainq} $LPATHS $XPATHS; do
 		v=$(avg "$k/$p")
 		if [ "$v" -gt 0 ]; then cells="$cells $(printf '%9s' "$(pct $v $pl)")"; [ "$p" != plainp ] && [ "$v" -gt "$bh" ] && { best=$p; bh=$v; }
 		else cells="$cells $(printf '%9s' -)"; fi
@@ -225,7 +227,7 @@ say ""
 say "TABLE ROWS (paste these back):"
 for k in "${TYPES[@]}"; do
 	line="ROW $k $(partname ${k%:*} ${k#*:}) maxMHz=${TYPE_MAXF[$k]// MHz/} plain=$(avg "$k/plain")"
-	for p in plainp ${PLQ:+plainq} $XPATHS; do v=$(avg "$k/$p"); [ "$v" -gt 0 ] && line="$line $p=$v"; done
+	for p in plainp ${PLQ:+plainq} $LPATHS $XPATHS; do v=$(avg "$k/$p"); [ "$v" -gt 0 ] && line="$line $p=$v"; done
 	say "$line"
 done
 say "Log saved to $LOG"

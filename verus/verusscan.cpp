@@ -341,7 +341,7 @@ struct verus_scan_ctx {
 };
 
 /* variants x2/x3/x4/auto: VERUS_LANES nonces per iteration, each lane with its own key copy (see verus_x2.h). */
-template<int SEL>
+template<int SEL, int NLT = VERUS_LANES>
 static __attribute__((noinline)) void verus_scan_lanes(struct verus_scan_ctx *c)
 {
 	struct work *work = c->work;
@@ -349,21 +349,22 @@ static __attribute__((noinline)) void verus_scan_lanes(struct verus_scan_ctx *c)
 	const uint32_t Htarg = c->Htarg;
 	uint8_t *nonceSpace = c->nonceSpace;
 	struct timeval tv_now;
-	const int NL = VERUS_LANES;
-	alignas(64) __m128i keyL[VERUS_LANES - 1][VERUS_KEY_SIZE128 + 8];
-	alignas(64) __m128i gpL[VERUS_LANES - 1][32], gpxL[VERUS_LANES - 1][32];
-	alignas(16) uint8_t halfL[VERUS_LANES - 1][64];
-	uint16_t fixrandL[VERUS_LANES - 1][32], fixrandexL[VERUS_LANES - 1][32];
-	struct verus_lane L[VERUS_LANES];
+	const int NL = NLT;
+	constexpr int NX = NLT > 1 ? NLT - 1 : 1;   /* extra lanes (at least 1 so the arrays are valid) */
+	alignas(64) __m128i keyL[NX][VERUS_KEY_SIZE128 + 8];
+	alignas(64) __m128i gpL[NX][32], gpxL[NX][32];
+	alignas(16) uint8_t halfL[NX][64];
+	uint16_t fixrandL[NX][32], fixrandexL[NX][32];
+	struct verus_lane L[NLT];
 	L[0] = (struct verus_lane){ c->data_key, c->fixrand, c->fixrandex, c->gp, c->gpx, c->blockhash_half, c->pristine };
 	for (int l = 1; l < NL; l++) {
 		memcpy(keyL[l - 1], c->data_key, VERUS_KEY_SIZE128 * sizeof(__m128i));
 		memcpy(halfL[l - 1], c->blockhash_half, 64);
 		L[l] = (struct verus_lane){ keyL[l - 1], fixrandL[l - 1], fixrandexL[l - 1], gpL[l - 1], gpxL[l - 1], halfL[l - 1], c->pristine };
 	}
-	uint8_t nonceL[VERUS_LANES][15];
-	uint32_t vh[VERUS_LANES][8];
-	unsigned char *hp[VERUS_LANES]; const unsigned char *np[VERUS_LANES];
+	uint8_t nonceL[NLT][15];
+	uint32_t vh[NLT][8];
+	unsigned char *hp[NLT]; const unsigned char *np[NLT];
 	for (int l = 0; l < NL; l++) { hp[l] = (unsigned char *)vh[l]; np[l] = nonceL[l]; }
 	throughput = NL;
 	do {
@@ -374,7 +375,7 @@ static __attribute__((noinline)) void verus_scan_lanes(struct verus_scan_ctx *c)
 		}
 		memset(vh, 0, sizeof(vh));
 
-		Verus2hash_xN<VERUS_LANES, (VERUS_LANES == 2 ? SEL : 0)>(hp, L, np);
+		Verus2hash_xN<NLT, (NLT <= 2 ? SEL : 0)>(hp, L, np);
 
 		for (int lane = 0; lane < NL; lane++) {
 			if (vh[lane][7] <= Htarg) {
@@ -540,6 +541,32 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 		}
 		goto out;
 	}
+#ifdef VERUS_PRISTINE
+	{
+		/* testing aid: VERUS_SEL1=N runs single-nonce cores through the two-nonce round code with one lane
+		 * and SEL N (128 = journal-free, i.e. the same algorithm as the default single-nonce loop) */
+		static int sel1 = -2;
+		if (sel1 == -2) { const char *e = getenv("VERUS_SEL1"); sel1 = -1; if (e && e[0]) { char *end; long x = strtol(e, &end, 10);
+			if (!*end && (x == 128 || x == 129 || x == 130 || x == 131 || x == 160 || x == 163 || x == 192 || x == 224 || x == 640 || x == 672)) sel1 = (int)x; } }
+		if (sel1 >= 0) {
+			struct verus_scan_ctx c = { work, thr_id, max_nonce, hashes_done, nonce_buf, nonceSpace, full_data, sol_data,
+				Htarg, vhash, data_key, fixrand, fixrandex, data_key_prand, data_key_prandex, blockhash_half, tv_start, pristine_key };
+			switch (sel1) {
+			case 129: verus_scan_lanes<129, 1>(&c); break;
+			case 130: verus_scan_lanes<130, 1>(&c); break;
+			case 131: verus_scan_lanes<131, 1>(&c); break;
+			case 160: verus_scan_lanes<160, 1>(&c); break;
+			case 163: verus_scan_lanes<163, 1>(&c); break;
+			case 192: verus_scan_lanes<192, 1>(&c); break;
+			case 224: verus_scan_lanes<224, 1>(&c); break;
+			case 640: verus_scan_lanes<640, 1>(&c); break;
+			case 672: verus_scan_lanes<672, 1>(&c); break;
+			default:  verus_scan_lanes<128, 1>(&c); break;
+			}
+			goto out;
+		}
+	}
+#endif
 #endif
 	do {
 

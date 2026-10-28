@@ -90,6 +90,12 @@ jobs:
               tests/verus_x2test.cpp clx2.o hk.o hkp.o -o x2testsel$f
             ./x2testsel$f 300000 | sed "s/x2test/x2test SEL $f/" | tee -a difftest.txt
           done
+          # one lane through the same round code (single-nonce cores, VERUS_SEL1)
+          for f in 128 129 130 131 160 163 192 224 640 672; do
+            clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_LANES=1 -DVERUS_SEL_FORCE=$f -I. -Iverus \
+              tests/verus_x2test.cpp clx2.o hk.o hkp.o -o x2test1sel$f
+            ./x2test1sel$f 200000 | sed "s/x2test/x2test 1-lane SEL $f/" | tee -a difftest.txt
+          done
           clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -I. -Iverus \
             -c verus/verus_clhash_portable.cpp -o clplain.o
           clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -I. -Iverus \
@@ -101,7 +107,7 @@ jobs:
           grep -q 'pristinetest preload.*PASS' difftest.txt
           for v in baseline pristine x2percore x2percorep; do echo "banner $v: $(./out/ccminer-$v --version 2>&1 | grep -o 'Verus variant: .*' | head -1)" | tee -a difftest.txt; done
           ! grep -q FAIL difftest.txt
-          [ "$(grep -c 'x2test.*PASS' difftest.txt)" = 42 ]
+          [ "$(grep -c 'x2test.*PASS' difftest.txt)" = 52 ]
           grep -q 'pristinetest.*PASS' difftest.txt
       - name: One-step build script (build-verus.sh, system clang)
         run: |
