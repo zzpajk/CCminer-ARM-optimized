@@ -116,8 +116,10 @@ if [ "$REPORT_ONLY" -eq 1 ]; then device_info; exit 0; fi
 SUDO=""; [ "$(id -u)" -ne 0 ] && have sudo && SUDO="sudo"
 if have pkg && [ -d /data/data/com.termux ]; then
   echo "[1/6] Installing build dependencies (Termux)..."
-  pkg install -y git clang lld make autoconf automake libtool pkg-config \
-      libcurl libjansson openssl zlib binutils libomp 2>&1 | tail -3
+  # one package at a time: a name missing in this Termux version (libomp is not a package) must not block the rest
+  for pk in git clang lld make autoconf automake libtool pkg-config libcurl libjansson openssl zlib binutils; do
+    DEBIAN_FRONTEND=noninteractive pkg install -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "$pk" >/dev/null 2>&1 || echo "  pkg: could not install $pk"
+  done
 elif have apt-get; then
   echo "[1/6] Installing build dependencies (apt; may ask for your sudo password)..."
   # wait up to 10 minutes if another apt/dpkg holds the lock (e.g. an install someone started by hand)

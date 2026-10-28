@@ -33,7 +33,9 @@ SUDO=""; [ "$(id -u)" -ne 0 ] && have sudo && SUDO="sudo"
 
 if have pkg && [ -d /data/data/com.termux ]; then
   echo "[1/5] Installing build dependencies (Termux)..."
-  pkg install -y git clang lld make autoconf automake libtool pkg-config libcurl libjansson openssl zlib binutils libomp 2>&1 | tail -3
+  for pk in git clang lld make autoconf automake libtool pkg-config libcurl libjansson openssl zlib binutils; do
+    DEBIAN_FRONTEND=noninteractive pkg install -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "$pk" >/dev/null 2>&1 || echo "  pkg: could not install $pk"
+  done
   SYSCLANG=1   # Termux ships one clang version
 elif have apt-get; then
   echo "[1/5] Installing build dependencies (apt; may ask for your sudo password)..."
