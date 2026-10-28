@@ -45,8 +45,8 @@ jobs:
             echo "$v: aese=$(objdump -d out/ccminer-$v | grep -cE '\baese\b') pmull=$(objdump -d out/ccminer-$v | grep -cE '\bpmull2?\b') br=$(objdump -d out/ccminer-$v | grep -cE '\sbr\s+x')"
           done
           CFL="-O2 -march=armv8-a+crypto -fno-strict-aliasing -I. -Iverus"
-          clang $CFL -Dharaka512_keyed=haraka512_keyed_base -c verus/haraka.c -o hb.o
-          clang $CFL -DVERUS_ZIPMIX -Dharaka512_keyed=haraka512_keyed_var -c verus/haraka.c -o hv.o
+          clang $CFL -Dharaka512_keyed=haraka512_keyed_base -Dharaka512_keyed_x2=haraka512_keyed_x2_base -c verus/haraka.c -o hb.o
+          clang $CFL -DVERUS_ZIPMIX -Dharaka512_keyed=haraka512_keyed_var -Dharaka512_keyed_x2=haraka512_keyed_x2_var -c verus/haraka.c -o hv.o
           clang $CFL tests/verus_difftest.c hb.o hv.o -o difftest
           ./difftest 2000000 | tee difftest.txt
           grep -q PASS difftest.txt
