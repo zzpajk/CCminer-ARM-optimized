@@ -263,7 +263,9 @@ static void verus_scan_cpuinfo()
  *   Cortex-A75 (0x41:0xd0a, S10): x2, sel, sel2 equal within heat drift; gets the default sel2
  *   Cortex-A73 (0x41:0xd09, Galaxy A40): x2 best (bench x2 +12.5% vs sel2 +7.8% over plain; sweep round 1
  *   x2 > sel > sel2, round 2 a tie while throttling)
- * So Mongoose M1/M2 and Cortex-A73 use plain x2; every other out-of-order core uses sel2. VERUS_SEL=0..3 in the environment
+ * So Mongoose M1/M2 and Cortex-A73 use plain x2; every other out-of-order core uses sel2, plus (SEL bit 5) the
+ * branch-free case 0x0c except on the A75: sweep 2026-10-28 vs sel2: M3 +2.0%, M5 +1.2..1.4%, M4 +0.9%,
+ * A76 +0.4%, A78 +0.4%, X1 +0.1%, A75 -1.7%. (Bit 4, the light-case merge, lost 3..12% on every core.) VERUS_SEL=0..3 in the environment
  * overrides the choice for all out-of-order cores (for testing); VERUS_SEL=7 adds the fully branch-free
  * case 0x14 (x2sel3). Bit 16 (light merge of cases 0/4/8/0x1c) and bit 32 (branch-free case 0x0c) are
  * selectable for testing: VERUS_SEL=16, 32, 48 (on top of x2) or 19, 35, 51 (on top of sel2). */
@@ -272,9 +274,10 @@ static int verus_sel_for_cpu(int cpu)
 	int sel = VERUS_SEL_DEFAULT;
 #ifdef VERUS_PERCORE
 	if (cpu >= 0 && cpu < 1024) {
-		if (g_impl[cpu] == 0x53) sel = (g_part[cpu] == 0x001) ? 0 : 3;
+		if (g_impl[cpu] == 0x53) sel = (g_part[cpu] == 0x001) ? 0 : 35;
 		else if (g_impl[cpu] == 0x41 && g_part[cpu] == 0xd09) sel = 0;   /* Cortex-A73 */
-		else sel = 3;
+		else if (g_impl[cpu] == 0x41 && g_part[cpu] == 0xd0a) sel = 3;   /* Cortex-A75: selc -1.7% (S10 sweep) */
+		else sel = 35;                                                   /* sel2 + branch-free case 0x0c */
 	}
 #ifdef VERUS_PERCORE3
 	sel |= 4;   /* x2percore3: also the fully branch-free case 0x14 on every out-of-order core */

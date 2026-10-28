@@ -61,9 +61,10 @@ partname() { # impl part
 inorder() { case "$1:$2" in 0x41:0xd02|0x41:0xd03|0x41:0xd04|0x41:0xd05|0x41:0xd46|0x41:0xd80|0x51:0x801|0x51:0x803|0x51:0x805) return 0;; esac; return 1; }
 default_path() {
 	if inorder "$1" "$2"; then echo plain
-	elif [ "$1" = 0x53 ]; then case "$2" in 0x001) echo x2;; *) echo sel2;; esac
+	elif [ "$1" = 0x53 ]; then case "$2" in 0x001) echo x2;; *) echo selc;; esac
 	elif [ "$1:$2" = 0x41:0xd09 ]; then echo x2
-	else echo sel2; fi
+	elif [ "$1:$2" = 0x41:0xd0a ]; then echo sel2
+	else echo selc; fi
 }
 
 declare -A TYPE_CPUS TYPE_MAXF

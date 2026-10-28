@@ -5,7 +5,8 @@
 #   in-order cores (Cortex-A53/A55/A510, Kryo Silver)  the original one-nonce loop, with the key restored from
 #                                                       a pristine copy instead of a per-round journal
 #   Mongoose M1/M2, Cortex-A73                        two nonces hashed side by side
-#   every other big core (Mongoose M3-M5, A75-A78, X1)  two nonces side by side + branch-free choices
+#   every other big core (Mongoose M3-M5, A75-A78, X1)  two nonces side by side + branch-free choices (in cases
+#                                                       0x14 and 0x18, and except on the A75 also in 0x0c)
 # Compiler: clang 17 when it can be installed (measured +2-3% over clang 10/14 on 5 phones, GCC slower);
 # otherwise the system clang. With clang 18 or newer (e.g. Termux) the script restores jump tables for small
 # switches (LLVM 18 stopped using them below 13 cases on AArch64, which turns the hash's 8-way case switch into
