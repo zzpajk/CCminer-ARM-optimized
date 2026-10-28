@@ -520,9 +520,9 @@ static char *gethelp(char *params)
  * HTTP "GET /histo.json") returns the same data as JSON instead of "KEY=VAL;KEY=VAL|" records.
  * Values that are plain numbers stay numbers, everything else becomes a string. summary, pool and
  * meminfo give one object, the other commands an array of objects (help: an array of names). */
-static char json_buf[MYBUFSIZ * 2 + 64];
+static char api_json_buf[MYBUFSIZ * 2 + 64];
 
-static size_t json_put_str(char *o, size_t left, const char *v, size_t n)
+static size_t api_json_put_str(char *o, size_t left, const char *v, size_t n)
 {
 	size_t k = 0;
 	if (left < 3) return 0;
@@ -537,7 +537,7 @@ static size_t json_put_str(char *o, size_t left, const char *v, size_t n)
 	return k;
 }
 
-static bool json_is_number(const char *v, size_t n)
+static bool api_json_is_number(const char *v, size_t n)
 {
 	if (!n || n > 40) return false;
 	if (!(v[0] == '-' || (v[0] >= '0' && v[0] <= '9'))) return false;
@@ -551,7 +551,7 @@ static char *api_to_json(const char *cmd, const char *in)
 {
 	const bool single = !strcmp(cmd, "summary") || !strcmp(cmd, "pool") || !strcmp(cmd, "meminfo");
 	const bool names = !strcmp(cmd, "help");
-	char *o = json_buf; size_t left = sizeof(json_buf) - 4, k = 0;
+	char *o = api_json_buf; size_t left = sizeof(api_json_buf) - 4, k = 0;
 	int nrec = 0;
 	if (!in) in = "";
 	if (!single) o[k++] = '[';
@@ -564,7 +564,7 @@ static char *api_to_json(const char *cmd, const char *in)
 				const char *f = r;
 				while (f < re && k + 64 < left) {
 					const char *fe = f; while (fe < re && *fe != '\n') fe++;
-					if (fe > f) { if (nrec++) o[k++] = ','; k += json_put_str(o + k, left - k, f, (size_t)(fe - f)); }
+					if (fe > f) { if (nrec++) o[k++] = ','; k += api_json_put_str(o + k, left - k, f, (size_t)(fe - f)); }
 					f = fe + 1;
 				}
 			} else {
@@ -577,11 +577,11 @@ static char *api_to_json(const char *cmd, const char *in)
 					const char *eq = (const char *) memchr(f, '=', (size_t)(fe - f));
 					if (eq && eq > f) {
 						if (nf++) o[k++] = ',';
-						k += json_put_str(o + k, left - k, f, (size_t)(eq - f));
+						k += api_json_put_str(o + k, left - k, f, (size_t)(eq - f));
 						o[k++] = ':';
 						const char *v = eq + 1; size_t vn = (size_t)(fe - v);
-						if (json_is_number(v, vn) && k + vn + 4 < left) { memcpy(o + k, v, vn); k += vn; }
-						else k += json_put_str(o + k, left - k, v, vn);
+						if (api_json_is_number(v, vn) && k + vn + 4 < left) { memcpy(o + k, v, vn); k += vn; }
+						else k += api_json_put_str(o + k, left - k, v, vn);
 					}
 					f = fe + 1;
 				}
@@ -594,7 +594,7 @@ static char *api_to_json(const char *cmd, const char *in)
 	if (single && !nrec) { o[k++] = '{'; o[k++] = '}'; }
 	if (!single) o[k++] = ']';
 	o[k] = '\0';
-	return json_buf;
+	return api_json_buf;
 }
 
 static int send_http_json(SOCKETTYPE c, const char *body)
