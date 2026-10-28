@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# verus-core-sweep.sh v1.3: fill in the x2percore table for a new phone in one run.
+# verus-core-sweep.sh v1.4: fill in the x2percore table for a new phone in one run.
 #
 # For every CPU core type of this device (grouped by "CPU implementer:part" from /proc/cpuinfo) it runs the
 # miner pinned to ONE core of that type, once per hashing path, and reports which path is fastest:
@@ -10,6 +10,11 @@
 #   sel2   x2 + branch-free choice in cases 0x14 and 0x18   VERUS_LANES=2 VERUS_SEL=3
 #   fuse   x2 with one 64-way dispatch on the pair of cases VERUS_LANES=2 VERUS_SEL=8
 #   fuse2  fuse + sel2                                       VERUS_LANES=2 VERUS_SEL=11
+#   light  sel2 + cases 0/4/8/0x1c merged (5 jump targets)    VERUS_LANES=2 VERUS_SEL=19
+#   selc   sel2 + branch-free case 0x0c                       VERUS_LANES=2 VERUS_SEL=35
+#   lightc sel2 + both                                        VERUS_LANES=2 VERUS_SEL=51
+#   x2light / x2selc / x2lightc  the same on top of plain x2  VERUS_SEL=16 / 32 / 48
+# (-P chooses which two-nonce paths run; default: x2 sel sel2 fuse fuse2)
 # and compares the winner with what x2percore picks by default for that core type today.
 # Optionally (-a) it also runs all cores: x2percore default vs plain everywhere.
 #
@@ -18,18 +23,19 @@
 # Needs: clang, make, git, libcurl/jansson/ssl dev packages (the same ones verus-ref-bench.sh installs).
 # Runs in UserLAnd/Ubuntu or Termux. Benchmark mode only: it never connects to a pool.
 #
-# Usage: bash verus-core-sweep.sh [-d secs] [-r rounds] [-c cooldown] [-b bin] [-p bin] [-B branch] [-a] [-A]
+# Usage: bash verus-core-sweep.sh [-d secs] [-r rounds] [-c cooldown] [-b bin] [-p bin] [-B branch] [-P paths] [-a] [-A]
 #   -d  seconds per run (default 20)        -r  rounds, order reversed every other round (default 2)
 #   -c  cooldown seconds between runs (8)   -b  x2percore binary to use instead of building
 #   -p  x2percore+pristine binary
 #   -B  branch or commit to build (variants)
 #   -a  also run the all-core comparison    -A  also test the x2 paths on in-order cores (normally skipped)
+#   -P  two-nonce paths to run, e.g. -P "sel2 light selc lightc"
 set -u
-DUR=20; ROUNDS=2; COOL=8; BIN=""; BINP=""; BRANCH="variants"; ALLCORE=0; ALLINORDER=0
+DUR=20; ROUNDS=2; COOL=8; BIN=""; BINP=""; BRANCH="variants"; ALLCORE=0; ALLINORDER=0; XPATHS="x2 sel sel2 fuse fuse2"
 REPO="https://github.com/zzpajk/CCminer-ARM-optimized.git"
-while getopts "d:r:c:b:p:B:aAh" o; do
-	case "$o" in d) DUR=$OPTARG;; r) ROUNDS=$OPTARG;; c) COOL=$OPTARG;; b) BIN=$OPTARG;; p) BINP=$OPTARG;; B) BRANCH=$OPTARG;;
-		a) ALLCORE=1;; A) ALLINORDER=1;; *) sed -n '2,27p' "$0"; exit 0;; esac
+while getopts "d:r:c:b:p:B:P:aAh" o; do
+	case "$o" in d) DUR=$OPTARG;; r) ROUNDS=$OPTARG;; c) COOL=$OPTARG;; b) BIN=$OPTARG;; p) BINP=$OPTARG;; B) BRANCH=$OPTARG;; P) XPATHS=$OPTARG;;
+		a) ALLCORE=1;; A) ALLINORDER=1;; *) sed -n '2,34p' "$0"; exit 0;; esac
 done
 WORK="${VERUS_SWEEP_DIR:-$HOME/verus-sweep}"
 mkdir -p "$WORK"; cd "$WORK" || exit 1
@@ -129,6 +135,9 @@ run() {
 	local name=$1 mask=$2 thr=$3 envs out hs path bin=$BIN
 	case "$name" in plain) envs="VERUS_LANES=1";; plainp) envs="VERUS_LANES=1"; bin=$BINP;; x2) envs="VERUS_LANES=2 VERUS_SEL=0";; sel) envs="VERUS_LANES=2 VERUS_SEL=1";;
 		sel2) envs="VERUS_LANES=2 VERUS_SEL=3";; fuse) envs="VERUS_LANES=2 VERUS_SEL=8";; fuse2) envs="VERUS_LANES=2 VERUS_SEL=11";;
+		light) envs="VERUS_LANES=2 VERUS_SEL=19";; selc) envs="VERUS_LANES=2 VERUS_SEL=35";; lightc) envs="VERUS_LANES=2 VERUS_SEL=51";;
+		x2light) envs="VERUS_LANES=2 VERUS_SEL=16";; x2selc) envs="VERUS_LANES=2 VERUS_SEL=32";; x2lightc) envs="VERUS_LANES=2 VERUS_SEL=48";;
+		*) echo "0|unknown path $name"; return;;
 		default) envs="";; esac
 	local aff=""; [ "$mask" != none ] && aff="--cpu-affinity $mask"   # none: miner's own pinning (thread i on core i)
 	out=$(env $envs "$bin" -a verus --benchmark -t "$thr" $aff --time-limit "$DUR" --no-color 2>&1)
@@ -142,7 +151,8 @@ declare -A SUM CNT PATHSEEN
 total=0
 PL="plain"; [ -n "$BINP" ] && PL="plain plainp"
 npl=$(echo $PL | wc -w)
-for k in "${TYPES[@]}"; do inorder ${k%:*} ${k#*:} && [ $ALLINORDER = 0 ] && total=$((total + npl)) || total=$((total + npl + 5)); done
+nxp=$(echo $XPATHS | wc -w)
+for k in "${TYPES[@]}"; do inorder ${k%:*} ${k#*:} && [ $ALLINORDER = 0 ] && total=$((total + npl)) || total=$((total + npl + nxp)); done
 total=$((total * ROUNDS)); [ $ALLCORE = 1 ] && total=$((total + 2 * ROUNDS))
 say ""; say "Plan: $total runs x ${DUR}s + ${COOL}s cooldown = about $(( total * (DUR + COOL + 3) / 60 + 1 )) min"
 # The first run after a build was far too slow on several phones (38k instead of 580k H/s on an A55):
@@ -155,7 +165,7 @@ n=0
 for ((r = 1; r <= ROUNDS; r++)); do
 	for k in "${TYPES[@]}"; do
 		set -- ${TYPE_CPUS[$k]}; c=$1
-		if inorder ${k%:*} ${k#*:} && [ $ALLINORDER = 0 ]; then paths="$PL"; else paths="$PL x2 sel sel2 fuse fuse2"; fi
+		if inorder ${k%:*} ${k#*:} && [ $ALLINORDER = 0 ]; then paths="$PL"; else paths="$PL $XPATHS"; fi
 		[ $((r % 2)) = 0 ] && paths=$(echo $paths | tr ' ' '\n' | tac | tr '\n' ' ')
 		for p in $paths; do
 			n=$((n + 1))
@@ -181,11 +191,12 @@ done
 avg() { [ "${CNT[$1]:-0}" -gt 0 ] && echo $(( SUM[$1] / CNT[$1] )) || echo 0; }
 pct() { awk -v a="$1" -v b="$2" 'BEGIN { if (b > 0) printf "%+.1f%%", (a / b - 1) * 100; else printf "n/a" }'; }
 say ""; say "================ RESULT (1 thread per core type, mean of $ROUNDS round(s), ${DUR}s runs) ================"
-printf '%-18s %-9s %10s %9s %9s %9s %9s %9s %9s   %-6s %-8s %s\n' "core type" "id" "plain" "pristine" "x2" "sel" "sel2" "fuse" "fuse2" "best" "default" "verdict"
+hdr=$(printf '%-18s %-9s %10s %9s' "core type" "id" "plain" "pristine"); for p in $XPATHS; do hdr="$hdr $(printf '%9s' "$p")"; done
+printf '%s   %-6s %-8s %s\n' "$hdr" "best" "default" "verdict"
 for k in "${TYPES[@]}"; do
 	name=$(partname ${k%:*} ${k#*:}); def=$(default_path ${k%:*} ${k#*:})
 	pl=$(avg "$k/plain"); best=plain; bh=$pl; cells=""
-	for p in plainp x2 sel sel2 fuse fuse2; do
+	for p in plainp $XPATHS; do
 		v=$(avg "$k/$p")
 		if [ "$v" -gt 0 ]; then cells="$cells $(printf '%9s' "$(pct $v $pl)")"; [ "$p" != plainp ] && [ "$v" -gt "$bh" ] && { best=$p; bh=$v; }
 		else cells="$cells $(printf '%9s' -)"; fi
@@ -205,7 +216,7 @@ say ""
 say "TABLE ROWS (paste these back):"
 for k in "${TYPES[@]}"; do
 	line="ROW $k $(partname ${k%:*} ${k#*:}) maxMHz=${TYPE_MAXF[$k]// MHz/} plain=$(avg "$k/plain")"
-	for p in plainp x2 sel sel2 fuse fuse2; do v=$(avg "$k/$p"); [ "$v" -gt 0 ] && line="$line $p=$v"; done
+	for p in plainp $XPATHS; do v=$(avg "$k/$p"); [ "$v" -gt 0 ] && line="$line $p=$v"; done
 	say "$line"
 done
 say "Log saved to $LOG"
