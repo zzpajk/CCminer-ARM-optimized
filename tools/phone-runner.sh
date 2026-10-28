@@ -10,13 +10,13 @@
 #   bash phone-runner.sh start|stop|status|log
 #
 # Jobs repo layout (written by Claude):    jobs/NAME/<id>.job
-#   script=bench | sweep | info | runner-update
+#   script=bench | sweep | info | led | runner-update   (led: arg=cyan|magenta|...|off, tools/phone-led.sh)
 #   commit=<fork commit, full 40-hex SHA> (not needed for info)
 #   arg=<one argument per line>          e.g.  arg=-v   then   arg=baseline x2auto x2percore
 #   timeout=<minutes>                    optional, default 240
 # Results (written by the phone):         results/NAME/<id>/{status,console.log,report.txt}, results/NAME/heartbeat.txt
 set -u
-RUNNER_VERSION=1.4
+RUNNER_VERSION=1.5
 JOBS_REPO="${VERUS_JOBS_REPO:-git@github.com:zzpajk/verus-phone-jobs.git}"
 FORK="${VERUS_FORK:-https://github.com/zzpajk/CCminer-ARM-optimized.git}"
 CONF="$HOME/.verus-runner.conf"
@@ -71,7 +71,7 @@ run_job() { # job-file
 	done < "$f"
 	set +f
 	case "$tmo" in ''|*[!0-9]*) tmo=240;; esac
-	case "$script" in bench|sweep|runner-update) case "$commit" in [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) ;; *)
+	case "$script" in bench|sweep|led|runner-update) case "$commit" in [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) ;; *)
 		echo "failed $(date '+%F %T') bad commit: $commit" > "$R/status"; push_results "job $id rejected"; return;; esac;;
 	info) ;; *) echo "failed $(date '+%F %T') unknown script: $script" > "$R/status"; push_results "job $id rejected"; return;; esac
 	case "$commit" in *[!0-9a-f]*) echo "failed $(date '+%F %T') bad commit: $commit" > "$R/status"; push_results "job $id rejected"; return;; esac
@@ -93,6 +93,9 @@ run_job() { # job-file
 		  echo "free: $(free -m 2>/dev/null | awk 'NR==2{print $2" MB total, "$7" MB available"}')  disk: $(df -h "$HOME" | awk 'NR==2{print $4" free"}')"
 		  pgrep -fa ccminer || echo "no ccminer running"
 		} > "$R/console.log" 2>&1; rc=0;;
+	led)
+		path=$(fetch_script "$commit" phone-led.sh) && timeout 60 bash "$path" "${args[@]}" > "$R/console.log" 2>&1; rc=$?
+		[ -n "$path" ] || { echo "could not fetch phone-led.sh at $commit" > "$R/console.log"; rc=1; };;
 	runner-update)
 		path=$(fetch_script "$commit" phone-runner.sh) && bash -n "$path" && cp "$path" "$SELF" && chmod +x "$SELF" \
 			&& echo "updated to $(grep -m1 '^RUNNER_VERSION=' "$SELF")" > "$R/console.log" || { echo "update failed" > "$R/console.log"; rc=1; }
