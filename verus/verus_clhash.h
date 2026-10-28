@@ -38,9 +38,13 @@ static inline void verus_fixkey_pristine(const uint16_t * __restrict fixrand, co
 /* N independent nonces in lockstep (N = 2, 3 or 4); each lane needs its own copy of the key */
 /* SEL bit 0: branch-free inner choice in case 0x14, bit 1: same in case 0x18 (variants x2sel, x2sel2),
  * bit 2: case 0x14 entirely branch-free, all 8 steps computed and masked (variant x2sel3, used as SEL 7),
- * bit 3: fused dispatch, one 64-way jump on the pair of cases per round (SEL 8, 9, 11).
+ * bit 3: fused dispatch, one 64-way jump on the pair of cases per round (SEL 8, 9, 11),
+ * bit 4: light merge, cases 0/4/8/0x1c as one branch-free body (5 jump targets instead of 8),
+ * bit 5: case 0x0c without its 50/50 branch (SEL 16, 32, 48, 19, 35, 51 are instantiated).
  * The default comes from the build flags; x2percore picks it per core at run time. */
-#if defined(VERUS_FUSE64)
+#if defined(VERUS_SEL_FORCE)
+#  define VERUS_SEL_DEFAULT VERUS_SEL_FORCE   /* tests: any instantiated SEL value */
+#elif defined(VERUS_FUSE64)
 #  define VERUS_SEL_DEFAULT 11
 #elif defined(VERUS_SEL3)
 #  define VERUS_SEL_DEFAULT 7

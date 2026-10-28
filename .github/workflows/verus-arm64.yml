@@ -80,6 +80,12 @@ jobs:
           clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_FUSE64 -I. -Iverus \
             tests/verus_x2test.cpp clf64.o hk.o hkp.o -o x2testf64
           ./x2testf64 300000 | sed 's/x2test/x2test fuse64+sel2/' | tee -a difftest.txt
+          # SEL bit 16 (light merge of cases 0/4/8/0x1c) and bit 32 (branch-free case 0x0c), alone and on top of sel2
+          for f in 16 32 48 19 35 51; do
+            clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_SEL_FORCE=$f -I. -Iverus \
+              tests/verus_x2test.cpp clx2.o hk.o hkp.o -o x2testsel$f
+            ./x2testsel$f 300000 | sed "s/x2test/x2test SEL $f/" | tee -a difftest.txt
+          done
           clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -I. -Iverus \
             -c verus/verus_clhash_portable.cpp -o clplain.o
           clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -I. -Iverus \
@@ -87,7 +93,7 @@ jobs:
           ./pristinetest 300000 | tee -a difftest.txt
           for v in baseline pristine x2percore x2percorep; do echo "banner $v: $(./out/ccminer-$v --version 2>&1 | grep -o 'Verus variant: .*' | head -1)" | tee -a difftest.txt; done
           ! grep -q FAIL difftest.txt
-          [ "$(grep -c 'x2test.*PASS' difftest.txt)" = 8 ]
+          [ "$(grep -c 'x2test.*PASS' difftest.txt)" = 14 ]
           grep -q 'pristinetest.*PASS' difftest.txt
       - name: One-step build script (build-verus.sh, system clang)
         run: |
@@ -127,7 +133,7 @@ jobs:
       - name: Benchmark (1 thread, 3 alternating rounds, 20 s)
         run: |
           for r in 1 2 3; do
-            for v in baseline x2percorep x2percorep:3 x2percorep:8 x2percorep:11; do
+            for v in baseline x2percorep x2percorep:19 x2percorep:35 x2percorep:51 x2percorep:16; do
               b=${v%%:*}; e=""; [ "$b" != "$v" ] && e="VERUS_SEL=${v#*:}"
               hs=$(env $e ./out/ccminer-$b -a verus --benchmark -t 1 --time-limit 20 --no-color 2>&1 | grep -E '^[0-9]+$' | tail -1)
               echo "round $r $v ${hs:-NONE} H/s" | tee -a bench.txt

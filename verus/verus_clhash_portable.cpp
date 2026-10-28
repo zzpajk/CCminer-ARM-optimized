@@ -751,6 +751,34 @@ uint32_t verus_dbg_n;
  * __verusclmulwithoutreduction64alignedrepeat_port2_2 above (generated from it, not rewritten), so two
  * independent nonces can be advanced in lockstep and the out-of-order core can overlap their dependency
  * chains. Each lane has its own key copy: a nonce mutates the key while hashing. */
+/* SEL bit 4 (16), "light merge": cases 0, 4, 8 and 0x1c are one template,
+ *   X = *A, Y = *B, P, Q = the two buffer words;  acc ^= F1(X, P);  *B = mulhrs(acc, X) ^ X;
+ *   acc ^= F2(Y, Q);  *A = mulhrs(acc, Y) ^ Y
+ * with F(v, p) = clmul(v ^ p) (CL), clmul(v ^ p) ^ clmul(p) (CL2) or v ^ p (LIN):
+ *   case 0:    A = prandex, P = pbsf, F1 = CL,   F2 = CL
+ *   case 4:    A = prand,   P = pbuf, F1 = CL2,  F2 = LIN
+ *   case 8:    A = prandex, P = pbuf, F1 = LIN,  F2 = CL2
+ *   case 0x1c: A = prandex, P = pbuf, F1 = CL,   F2 = LIN
+ * so they run as ONE branch-free body (pointer choice by csel, F choice by masks from this table) and the
+ * case jump has 5 targets instead of 8, one of them taken half the time. Indirect predictors do better on
+ * that (expected mispredicts per round ~0.69 instead of ~0.88 for a last-target style predictor; Exynos
+ * Mongoose's VPC predictor and M5's mispredict recovery buffer both cost more per extra target).
+ * Rows: mask LIN for F1, mask "add clmul(P)" for F1, same two for F2. */
+static const uint64_t verus_light_mask[4][8] __attribute__((aligned(64))) = {
+	{ 0, 0,  0, 0,  0, 0,  0, 0 },                                   /* case 0 */
+	{ 0, 0,  ~0ULL, ~0ULL,  ~0ULL, ~0ULL,  0, 0 },                   /* case 4 */
+	{ ~0ULL, ~0ULL,  0, 0,  0, 0,  ~0ULL, ~0ULL },                   /* case 8 */
+	{ 0, 0,  0, 0,  ~0ULL, ~0ULL,  0, 0 },                           /* case 0x1c */
+};
+FORCE_INLINE __m128i verus_light_f(const __m128i v, const __m128i p, const uint64_t *m)
+{
+	const __m128i cl = _mm_clmulepi64_si128_emu(v, v, 0x10);
+	const __m128i cp = _mm_clmulepi64_si128_emu(p, p, 0x10);
+	const uint64x2_t lin = vld1q_u64(m), addp = vld1q_u64(m + 2);
+	return vreinterpretq_s64_u64(veorq_u64(vbslq_u64(lin, vreinterpretq_u64_s64(v), vreinterpretq_u64_s64(cl)),
+		vandq_u64(addp, vreinterpretq_u64_s64(cp))));
+}
+
 /* FIXC >= 0: the case is known at compile time (fused dispatch, SEL bit 3), so the switch folds away. */
 template<int SEL, int FIXC = -1>
 FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *randomsource,
@@ -785,23 +813,39 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 		//fixrandex[i] = prandex_idx;
 
 
-		switch (FIXC >= 0 ? (uint64_t)FIXC : (uint64_t)VERUS_ABL_SWITCH(selector, i))
+		uint64_t sw = (uint64_t)VERUS_ABL_SWITCH(selector, i);
+		if (SEL & 16) {
+			/* light merge: cases 0, 4, 8, 0x1c (index 0, 1, 2, 7 -> bit mask 0x87) all jump to case 0 */
+			sw = ((0x87u >> ((sw >> 2) & 7)) & 1) ? 0 : sw;
+		}
+		switch (FIXC >= 0 ? (uint64_t)FIXC : sw)
 		{
 		case 0:
+		if (SEL & 16) {
+			const uint64_t c = (selector >> 2) & 3;          /* 0: case 0, 1: case 4, 2: case 8, 3: case 0x1c */
+			__m128i *pa = (c == 1) ? prand : prandex;
+			__m128i *pb = (c == 1) ? prandex : prand;
+			const __m128i *pp = (c == 0) ? pbsf : pbuf;
+			const __m128i *pq = (c == 0) ? pbuf : pbsf;
+			const uint64_t *mk = verus_light_mask[c];
+			/* the buffer words never alias the key, so all loads go first; Y is read before *B is written, as
+			 * in every original case (this also keeps the prand == prandex corner identical) */
+			const __m128i X = _mm_load_si128_emu(pa);
+			const __m128i Y = _mm_load_si128_emu(pb);
+			const __m128i P = _mm_load_si128_emu(pp);
+			const __m128i Q = _mm_load_si128_emu(pq);
+			acc = _mm_xor_si128_emu(acc, verus_light_f(_mm_xor_si128_emu(X, P), P, mk));
+			_mm_store_si128_emu(pb, _mm_xor_si128_emu(_mm_mulhrs_epi16_emu(acc, X), X));
+			acc = _mm_xor_si128_emu(acc, verus_light_f(_mm_xor_si128_emu(Y, Q), Q, mk + 4));
+			_mm_store_si128_emu(pa, _mm_xor_si128_emu(_mm_mulhrs_epi16_emu(acc, Y), Y));
+			break;
+		}
 		{
 			const __m128i temp1 = _mm_load_si128_emu(prandex);
 			const __m128i temp2 = _mm_load_si128_emu(pbsf);
 			const __m128i add1 = _mm_xor_si128_emu(temp1, temp2);
 			const __m128i clprod1 = _mm_clmulepi64_si128_emu(add1, add1, 0x10);
 			acc = _mm_xor_si128_emu(clprod1, acc);
-
-			/*
-			std::cout << "temp1: " << LEToHex(temp1) << std::endl;
-			std::cout << "temp2: " << LEToHex(temp2) << std::endl;
-			std::cout << "add1: " << LEToHex(add1) << std::endl;
-			std::cout << "clprod1: " << LEToHex(clprod1) << std::endl;
-			std::cout << "acc: " << LEToHex(acc) << std::endl;
-			*/
 
 			const __m128i tempa1 = _mm_mulhrs_epi16_emu(acc, temp1);
 			const __m128i tempa2 = _mm_xor_si128_emu(tempa1, temp1);
@@ -815,9 +859,7 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 			acc = _mm_xor_si128_emu(clprod12, acc);
 
 			const __m128i tempb1 = _mm_mulhrs_epi16_emu(acc, temp12);
-			//const __m128i tempb2 = _mm_xor_si128_emu(tempb1, temp12);
 			*prandex  = _mm_xor_si128_emu(tempb1, temp12);
-			//_mm_store_si128_emu(prandex, tempb2);
 			break;
 		}
 		case 4:
@@ -889,6 +931,25 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 			const __m128i tempa1 = _mm_mulhrs_epi16_emu(acc, temp1);
 			const __m128i tempa2 = _mm_xor_si128_emu(tempa1, temp1);
 
+			if (SEL & 32) {
+				/* SEL bit 5 (32): the 50/50 'dividend & 1' choice without a branch. Both arms are computed;
+				 * the two stores go to the same addresses in the same order as the arm taken, so the
+				 * prand == prandex corner stays identical:
+				 *   odd:  *prandex = tempa2; acc ^= clmul(Y ^ Q) ^ clmul(Q); *prand = mulhrs(acc, Y) ^ Y
+				 *   even: *prand = Y;        *prandex = tempa2;              acc ^= Q */
+				const uint64_t odd = (uint64_t)dividend & 1;
+				const __m128i Y = _mm_load_si128_emu(prandex);
+				const __m128i Q = _mm_load_si128_emu(pbuf);
+				const uint64x2_t m = vdupq_n_u64(0 - odd);
+				const __m128i v = _mm_xor_si128_emu(Y, Q);
+				const __m128i fodd = _mm_xor_si128_emu(_mm_clmulepi64_si128_emu(v, v, 0x10), _mm_clmulepi64_si128_emu(Q, Q, 0x10));
+				acc = _mm_xor_si128_emu(acc, vreinterpretq_s64_u64(vbslq_u64(m, vreinterpretq_u64_s64(fodd), vreinterpretq_u64_s64(Q))));
+				const __m128i lastodd = _mm_xor_si128_emu(_mm_mulhrs_epi16_emu(acc, Y), Y);
+				__m128i *p1 = odd ? prandex : prand;
+				__m128i *p2 = odd ? prand : prandex;
+				_mm_store_si128_emu(p1, vreinterpretq_s64_u64(vbslq_u64(m, vreinterpretq_u64_s64(tempa2), vreinterpretq_u64_s64(Y))));
+				_mm_store_si128_emu(p2, vreinterpretq_s64_u64(vbslq_u64(m, vreinterpretq_u64_s64(lastodd), vreinterpretq_u64_s64(tempa2))));
+			} else
 			if (dividend & 1)
 			{
 				const __m128i temp12 = _mm_load_si128_emu(prandex);
@@ -952,63 +1013,6 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 			__m128i *rc = prand;
 			uint64_t aesround = 0;
 			__m128i onekey, temp1a, temp1b, temp2a, temp2b;
-
-//			do
-//			{
-//				//std::cout << "acc: " << LEToHex(acc) << ", round check: " << LEToHex((selector & (0x10000000 << rounds))) << std::endl;
-//
-//				// note that due to compiler and CPUs, we expect this to do:
-//				// if (selector & ((0x10000000 << rounds) & 0xffffffff) if rounds != 3 else selector & 0xffffffff80000000):
-//				if (selector & ((uint64_t)0x10000000 << rounds))
-//				{
-//					onekey = _mm_load_si128_emu(rc++);
-//					const __m128i temp2 = _mm_load_si128_emu(rounds & 1 ? pbuf : buftmp);
-//					const __m128i add1 = _mm_xor_si128_emu(onekey, temp2);
-//					const __m128i clprod1 = _mm_clmulepi64_si128_emu(add1, add1, 0x10);
-//					acc = _mm_xor_si128_emu(clprod1, acc);
-//				}
-//				else
-//				{
-//					onekey = _mm_load_si128_emu(rc++);
-//					__m128i temp2 = _mm_load_si128_emu(rounds & 1 ? buftmp : pbuf);
-//					const uint64_t roundidx = aesround++ << 2;
-//					AES2(onekey, temp2, roundidx);
-//
-//					/*
-//					std::cout << " onekey1: " << LEToHex(onekey) << std::endl;
-//					std::cout << "  temp21: " << LEToHex(temp2) << std::endl;
-//					std::cout << "roundkey: " << LEToHex(rc[roundidx]) << std::endl;
-//
-//					aesenc((unsigned char *)&onekey, (unsigned char *)&(rc[roundidx]));
-//
-//					std::cout << "onekey2: " << LEToHex(onekey) << std::endl;
-//					std::cout << "roundkey: " << LEToHex(rc[roundidx + 1]) << std::endl;
-//
-//					aesenc((unsigned char *)&temp2, (unsigned char *)&(rc[roundidx + 1]));
-//
-//					std::cout << " temp22: " << LEToHex(temp2) << std::endl;
-//					std::cout << "roundkey: " << LEToHex(rc[roundidx + 2]) << std::endl;
-//
-//					aesenc((unsigned char *)&onekey, (unsigned char *)&(rc[roundidx + 2]));
-//
-//					std::cout << "onekey2: " << LEToHex(onekey) << std::endl;
-//
-//					aesenc((unsigned char *)&temp2, (unsigned char *)&(rc[roundidx + 3]));
-//
-//					std::cout << " temp22: " << LEToHex(temp2) << std::endl;
-//					*/
-//
-//					MIX2_EMU(onekey, temp2);
-//
-//					/*
-//					std::cout << "onekey3: " << LEToHex(onekey) << std::endl;
-//					*/
-//
-//					acc = _mm_xor_si128_emu(onekey, acc);
-//					acc = _mm_xor_si128_emu(temp2, acc);
-//				}
-//			} while (rounds--);
-//
 if (SEL & 4) {
 			/* variant x2sel3: case 0x14 without any branch. The loop runs (selector >> 61) + 1 steps; every
 			 * step's contribution depends only on the key, the buffer and the selector, never on acc, so all
@@ -1286,6 +1290,12 @@ template void verusclhash_port2_2_xN<2, 7>(void **, const unsigned char **, uint
 template void verusclhash_port2_2_xN<2, 8>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<2, 9>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<2, 11>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 16>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 32>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 48>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 19>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 35>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 51>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<3, 0>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<4, 0>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 /* BEGIN GENERATED x2fuse (tools/gen_fuse.py) */
