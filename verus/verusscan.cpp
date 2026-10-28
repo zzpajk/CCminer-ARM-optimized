@@ -268,7 +268,7 @@ static void verus_scan_cpuinfo()
  * branch-free case 0x0c except on the A75: sweep 2026-10-28 vs sel2: M3 +2.0%, M5 +1.2..1.4%, M4 +0.9%,
  * A76 +0.4%, A78 +0.4%, X1 +0.1%, A75 -1.7%. (Bit 4, the light-case merge, lost 3..12% on every core.)
  * Branch-table dispatch (bit 6) vs that: A76 +2.2/+2.3% (both S20s), X1 +0.7%, A75/A78 +-0.1%, Mongoose
- * M2..M5 -2.7..-5.8%, so only the A76 uses it (SEL 99). VERUS_SEL=0..3 in the environment
+ * M2..M5 -2.7..-5.8%, so only the A76 uses it (SEL 99). All of them add bits 256 + 128 (see below). VERUS_SEL=0..3 in the environment
  * overrides the choice for all out-of-order cores (for testing); VERUS_SEL=7 adds the fully branch-free
  * case 0x14 (x2sel3). Bit 16 (light merge of cases 0/4/8/0x1c) and bit 32 (branch-free case 0x0c) are
  * selectable for testing: VERUS_SEL=16, 32, 48 (on top of x2) or 19, 35, 51 (on top of sel2). */
@@ -282,6 +282,10 @@ static int verus_sel_for_cpu(int cpu)
 		else if (g_impl[cpu] == 0x41 && g_part[cpu] == 0xd0a) sel = 3;   /* Cortex-A75: selc -1.7% (S10 sweep) */
 		else if (g_impl[cpu] == 0x41 && g_part[cpu] == 0xd0b) sel = 99;  /* Cortex-A76: + branch-table dispatch */
 		else sel = 35;                                                   /* sel2 + branch-free case 0x0c */
+		/* every core: both Haraka512 interleaved (256) + journal-free key restore (128). Sweep 2026-10-28 vs
+		 * the paths above: A76 +4.2%, M3 +3.6%, X1 +3.4%, M5 +2.7/+3.2%, M4 +2.7%, A78 +1.9%, M2 +1.8%,
+		 * A75 +1.5%. (128 is dropped below when the build has no pristine key copy.) */
+		sel |= 256 | 128;
 	}
 #ifdef VERUS_PERCORE3
 	sel |= 4;   /* x2percore3: also the fully branch-free case 0x14 on every out-of-order core */
