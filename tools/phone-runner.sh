@@ -214,7 +214,11 @@ setup)
 	DEVICE=${3:-${PHONE%-tx}}; case "$DEVICE" in ''|*[!a-z0-9-]*) echo "bad DEVICE: $DEVICE"; exit 1;; esac
 	TERMUX=0; case "${PREFIX:-}" in *com.termux*) TERMUX=1;; esac
 	if [ $TERMUX = 1 ]; then
-		for c in git ssh ssh-keygen pgrep setsid; do command -v $c >/dev/null || { echo "installing tools..."; pkg install -y git openssh procps util-linux termux-tools >/dev/null 2>&1; break; }; done
+		for c in git ssh ssh-keygen pgrep setsid; do command -v $c >/dev/null || {
+			echo "installing tools (pkg install git openssh procps util-linux termux-tools)..."
+			DEBIAN_FRONTEND=noninteractive pkg install -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
+				git openssh procps util-linux termux-tools || { echo "pkg install failed; run it by hand, then setup again"; exit 1; }
+			break; }; done
 	fi
 	for c in git ssh ssh-keygen; do command -v $c >/dev/null || { echo "missing $c (sudo apt-get install git openssh-client, or in Termux: pkg install git openssh)"; exit 1; }; done
 	[ "$(readlink -f "$0")" != "$(readlink -f "$SELF")" ] && cp "$0" "$SELF" && chmod +x "$SELF"
