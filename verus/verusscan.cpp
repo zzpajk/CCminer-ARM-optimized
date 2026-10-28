@@ -202,12 +202,13 @@ extern "C" void Verus2hash(unsigned char *hash, unsigned char *curBuf, unsigned 
 /* variant "pristine" (plain single-nonce loop only): no per-round journal of the old key values; the
  * touched positions are copied back from a pristine copy of the key made once per scan call. */
 static inline void Verus2hash_pristine(unsigned char *hash, unsigned char *curBuf, unsigned char *nonce,
-        __m128i * __restrict data_key, const __m128i * __restrict pristine, uint16_t * __restrict fixrand, uint16_t * __restrict fixrandex)
+        __m128i * __restrict data_key, const __m128i * __restrict pristine, uint16_t * __restrict fixrand, uint16_t * __restrict fixrandex,
+        uint64_t (*clfn)(void *, const unsigned char *, uint64_t, uint16_t *, uint16_t *))
 {
 	memcpy(curBuf + 47, curBuf, 16);
 	memcpy(curBuf + 63, curBuf, 1);
 	memcpy(curBuf + 32, nonce, 15);
-	uint64_t intermediate = verusclhash_port2_2_nojournal(data_key, curBuf, 511, fixrand, fixrandex);
+	uint64_t intermediate = clfn(data_key, curBuf, 511, fixrand, fixrandex);
 	memcpy(curBuf + 47, &intermediate, 8);
 	memcpy(curBuf + 55, &intermediate, 8);
 	memcpy(curBuf + 63, &intermediate, 1);
@@ -287,7 +288,7 @@ static int verus_sel_for_cpu(int cpu)
 #endif
 	static int env = -2;
 	if (env == -2) { const char *e = getenv("VERUS_SEL"); env = -1;
-		if (e && e[0]) { char *end; long x = strtol(e, &end, 10); if (!*end && (x == 0 || x == 1 || x == 2 || x == 3 || x == 4 || x == 5 || x == 7 || x == 8 || x == 9 || x == 11 || x == 16 || x == 32 || x == 48 || x == 19 || x == 35 || x == 51 || x == 64 || x == 67 || x == 99 || x == 39 || x == 128 || x == 131 || x == 163 || x == 227 || x == 256 || x == 259 || x == 291 || x == 355 || x == 384 || x == 387 || x == 419 || x == 483)) env = (int)x; } }
+		if (e && e[0]) { char *end; long x = strtol(e, &end, 10); if (!*end && (x == 0 || x == 1 || x == 2 || x == 3 || x == 4 || x == 5 || x == 7 || x == 8 || x == 9 || x == 11 || x == 16 || x == 32 || x == 48 || x == 19 || x == 35 || x == 51 || x == 64 || x == 67 || x == 99 || x == 39 || x == 128 || x == 131 || x == 163 || x == 227 || x == 256 || x == 259 || x == 291 || x == 355 || x == 384 || x == 387 || x == 419 || x == 483 || x == 512 || x == 515 || x == 547 || x == 640 || x == 643 || x == 675 || x == 768 || x == 771 || x == 803 || x == 896 || x == 899 || x == 931)) env = (int)x; } }
 	if (env >= 0) sel = env;
 #ifndef VERUS_PRISTINE
 	sel &= ~128;   /* the journal-free two-nonce restore needs the pristine key copy */
@@ -312,7 +313,7 @@ static int verus_lanes_for_this_core(int thr_id, int *sel)
 	*sel = (lanes > 1 && VERUS_LANES == 2) ? verus_sel_for_cpu(cpu) : 0;
 	static __thread int logged = 0;
 	if (!logged) { logged = 1; applog(LOG_INFO, "Verus thread %d on cpu %d: %d nonce(s) per step%s", thr_id, cpu, lanes,
-		lanes == 1 ? "" : (*sel >= 128 ? ((*sel & 256) ? ((*sel & 128) ? ", +haraka2+pristine" : ", +haraka2") : ", +pristine") : *sel == 39 ? ", sel3+selc" : *sel == 99 ? ", sel2+selc+bt" : *sel == 67 ? ", sel2+bt" : *sel == 64 ? ", bt" : *sel == 51 ? ", sel2+light+selc" : *sel == 35 ? ", sel2+selc" : *sel == 19 ? ", sel2+light" : *sel == 48 ? ", light+selc" : *sel == 32 ? ", selc" : *sel == 16 ? ", light" : *sel == 11 ? ", fuse+sel2" : *sel == 9 ? ", fuse+sel" : *sel == 8 ? ", fuse" : *sel == 7 ? ", sel3" : *sel == 5 ? ", sel14+full14" : *sel == 4 ? ", full14" : *sel == 3 ? ", sel2" : *sel == 1 ? ", sel" : *sel == 2 ? ", sel18" : "")); }
+		lanes == 1 ? "" : (*sel >= 512 ? ", +preload" : *sel >= 128 ? ((*sel & 256) ? ((*sel & 128) ? ", +haraka2+pristine" : ", +haraka2") : ", +pristine") : *sel == 39 ? ", sel3+selc" : *sel == 99 ? ", sel2+selc+bt" : *sel == 67 ? ", sel2+bt" : *sel == 64 ? ", bt" : *sel == 51 ? ", sel2+light+selc" : *sel == 35 ? ", sel2+selc" : *sel == 19 ? ", sel2+light" : *sel == 48 ? ", light+selc" : *sel == 32 ? ", selc" : *sel == 16 ? ", light" : *sel == 11 ? ", fuse+sel2" : *sel == 9 ? ", fuse+sel" : *sel == 8 ? ", fuse" : *sel == 7 ? ", sel3" : *sel == 5 ? ", sel14+full14" : *sel == 4 ? ", full14" : *sel == 3 ? ", sel2" : *sel == 1 ? ", sel" : *sel == 2 ? ", sel18" : "")); }
 	return lanes;
 #else
 	(void)thr_id;
@@ -461,6 +462,14 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 
 	throughput = 1;
 	const uint32_t Htarg = ptarget[7];
+#ifdef VERUS_PRISTINE
+	/* testing aid: VERUS_PRE1=1 runs the single-nonce loop with its four common operands loaded before the
+	 * case jump ("preload") */
+	static int pre1 = -1;
+	if (pre1 < 0) { const char *e = getenv("VERUS_PRE1"); pre1 = (e && e[0] == '1' && !e[1]) ? 1 : 0; }
+	uint64_t (*clfn)(void *, const unsigned char *, uint64_t, uint16_t *, uint16_t *) =
+		pre1 ? verusclhash_port2_2_nojournal_pre : verusclhash_port2_2_nojournal;
+#endif
 #ifdef VERUS_X2
 	int sel = 0;
 	if (verus_lanes_for_this_core(thr_id, &sel) > 1)
@@ -476,6 +485,18 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 #endif
 			};
 		switch (sel) {
+		case 931: verus_scan_lanes<931>(&c); break;
+		case 899: verus_scan_lanes<899>(&c); break;
+		case 896: verus_scan_lanes<896>(&c); break;
+		case 803: verus_scan_lanes<803>(&c); break;
+		case 771: verus_scan_lanes<771>(&c); break;
+		case 768: verus_scan_lanes<768>(&c); break;
+		case 675: verus_scan_lanes<675>(&c); break;
+		case 643: verus_scan_lanes<643>(&c); break;
+		case 640: verus_scan_lanes<640>(&c); break;
+		case 547: verus_scan_lanes<547>(&c); break;
+		case 515: verus_scan_lanes<515>(&c); break;
+		case 512: verus_scan_lanes<512>(&c); break;
 		case 483: verus_scan_lanes<483>(&c); break;
 		case 419: verus_scan_lanes<419>(&c); break;
 		case 387: verus_scan_lanes<387>(&c); break;
@@ -521,7 +542,7 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 
 #ifdef VERUS_PRISTINE
 		Verus2hash_pristine((unsigned char *)vhash, (unsigned char *)blockhash_half, nonceSpace, data_key,
-				pristine_key, fixrand, fixrandex);
+				pristine_key, fixrand, fixrandex, clfn);
 #else
 		Verus2hash((unsigned char *)vhash, (unsigned char *)blockhash_half, nonceSpace, data_key,
 				&gpuinit, fixrand, fixrandex , data_key_prand, data_key_prandex, version);

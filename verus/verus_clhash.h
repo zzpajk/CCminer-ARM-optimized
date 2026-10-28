@@ -23,6 +23,7 @@
 uint64_t verusclhash_port2_1(void * random, const unsigned char buf[64], uint64_t keyMask, uint16_t *  __restrict fixrand, uint16_t * __restrict fixrandex);
 uint64_t verusclhash_port2_2(void * random, const unsigned char buf[64], uint64_t keyMask, uint16_t *  __restrict fixrand, uint16_t * __restrict fixrandex, __m128i *g_prand, __m128i *g_prandex);
 uint64_t verusclhash_port2_2_nojournal(void * random, const unsigned char buf[64], uint64_t keyMask, uint16_t *  __restrict fixrand, uint16_t * __restrict fixrandex);
+uint64_t verusclhash_port2_2_nojournal_pre(void * random, const unsigned char buf[64], uint64_t keyMask, uint16_t *  __restrict fixrand, uint16_t * __restrict fixrandex);
 /* variant "pristine": undo one hash's key mutations by copying the touched positions back from an
  * unmodified copy of the key. Order does not matter (every touched position gets its original value). */
 static inline void verus_fixkey_pristine(const uint16_t * __restrict fixrand, const uint16_t * __restrict fixrandex,
@@ -44,6 +45,8 @@ static inline void verus_fixkey_pristine(const uint16_t * __restrict fixrand, co
  * bit 6: branch-table dispatch, no table load before the case jump resolves (SEL 64, 67, 99; AArch64 only),
  * bit 7 (128): no key journal in the rounds (caller restores from a pristine copy), bit 8 (256, handled in
  * Verus2hash_xN): the two Haraka512 interleaved. Instantiated: 39 128 131 163 227 (+256 needs no new one).
+ * bit 9 (512): preload, the four operands every case starts with are loaded before the case jump
+ * (instantiated: 512 515 547 640 643 675).
  * The default comes from the build flags; x2percore picks it per core at run time. */
 #if defined(VERUS_SEL_FORCE)
 #  define VERUS_SEL_DEFAULT VERUS_SEL_FORCE   /* tests: any instantiated SEL value */

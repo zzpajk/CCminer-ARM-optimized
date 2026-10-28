@@ -15,6 +15,7 @@
 #   lightc sel2 + both                                        VERUS_LANES=2 VERUS_SEL=51
 #   x2light / x2selc / x2lightc  the same on top of plain x2  VERUS_SEL=16 / 32 / 48
 #   bt / sel2bt / x2bt  selc / sel2 / x2 with branch-table dispatch (no table load)  VERUS_SEL=99 / 67 / 64
+#   plainq the pristine single-nonce loop with its operands loaded before the case jump (VERUS_PRE1=1)
 #   sN     any two-nonce SEL value N (e.g. s419 = selc + interleaved Haraka (256) + journal-free restore (128))
 # (-P chooses which two-nonce paths run; default: x2 sel sel2 fuse fuse2)
 # and compares the winner with what x2percore picks by default for that core type today.
@@ -32,11 +33,12 @@
 #   -B  branch or commit to build (variants)
 #   -a  also run the all-core comparison    -A  also test the x2 paths on in-order cores (normally skipped)
 #   -P  two-nonce paths to run, e.g. -P "sel2 light selc lightc"
+#   -Q  also run plainq (single-nonce loop + preload) on every core type
 set -u
-DUR=20; ROUNDS=2; COOL=8; BIN=""; BINP=""; BRANCH="variants"; ALLCORE=0; ALLINORDER=0; XPATHS="x2 sel sel2 fuse fuse2"
+DUR=20; ROUNDS=2; COOL=8; BIN=""; BINP=""; BRANCH="variants"; ALLCORE=0; ALLINORDER=0; XPATHS="x2 sel sel2 fuse fuse2"; PLQ=""
 REPO="https://github.com/zzpajk/CCminer-ARM-optimized.git"
-while getopts "d:r:c:b:p:B:P:aAh" o; do
-	case "$o" in d) DUR=$OPTARG;; r) ROUNDS=$OPTARG;; c) COOL=$OPTARG;; b) BIN=$OPTARG;; p) BINP=$OPTARG;; B) BRANCH=$OPTARG;; P) XPATHS=$OPTARG;;
+while getopts "d:r:c:b:p:B:P:QaAh" o; do
+	case "$o" in d) DUR=$OPTARG;; r) ROUNDS=$OPTARG;; c) COOL=$OPTARG;; b) BIN=$OPTARG;; p) BINP=$OPTARG;; B) BRANCH=$OPTARG;; P) XPATHS=$OPTARG;; Q) PLQ=1;;
 		a) ALLCORE=1;; A) ALLINORDER=1;; *) sed -n '2,34p' "$0"; exit 0;; esac
 done
 WORK="${VERUS_SWEEP_DIR:-$HOME/verus-sweep}"
@@ -142,6 +144,7 @@ run() {
 		light) envs="VERUS_LANES=2 VERUS_SEL=19";; selc) envs="VERUS_LANES=2 VERUS_SEL=35";; lightc) envs="VERUS_LANES=2 VERUS_SEL=51";;
 		bt) envs="VERUS_LANES=2 VERUS_SEL=99";; sel2bt) envs="VERUS_LANES=2 VERUS_SEL=67";; x2bt) envs="VERUS_LANES=2 VERUS_SEL=64";;
 		x2light) envs="VERUS_LANES=2 VERUS_SEL=16";; x2selc) envs="VERUS_LANES=2 VERUS_SEL=32";; x2lightc) envs="VERUS_LANES=2 VERUS_SEL=48";;
+		plainq) envs="VERUS_LANES=1 VERUS_PRE1=1"; bin=$BINP;;   # single-nonce pristine loop + preload
 		s[0-9]*) envs="VERUS_LANES=2 VERUS_SEL=${name#s}"; [ -n "$BINP" ] && bin=$BINP;;   # any SEL value, e.g. s419; pristine binary (bit 128 needs it)
 		*) echo "0|unknown path $name"; return;;
 		default) envs="";; esac
@@ -155,7 +158,7 @@ hexmask() { local m=0 c; for c in "$@"; do m=$((m | (1 << c))); done; printf '0x
 
 declare -A SUM CNT PATHSEEN
 total=0
-PL="plain"; [ -n "$BINP" ] && PL="plain plainp"
+PL="plain"; [ -n "$BINP" ] && PL="plain plainp${PLQ:+ plainq}"
 npl=$(echo $PL | wc -w)
 nxp=$(echo $XPATHS | wc -w)
 for k in "${TYPES[@]}"; do inorder ${k%:*} ${k#*:} && [ $ALLINORDER = 0 ] && total=$((total + npl)) || total=$((total + npl + nxp)); done
@@ -197,12 +200,12 @@ done
 avg() { [ "${CNT[$1]:-0}" -gt 0 ] && echo $(( SUM[$1] / CNT[$1] )) || echo 0; }
 pct() { awk -v a="$1" -v b="$2" 'BEGIN { if (b > 0) printf "%+.1f%%", (a / b - 1) * 100; else printf "n/a" }'; }
 say ""; say "================ RESULT (1 thread per core type, mean of $ROUNDS round(s), ${DUR}s runs) ================"
-hdr=$(printf '%-18s %-9s %10s %9s' "core type" "id" "plain" "pristine"); for p in $XPATHS; do hdr="$hdr $(printf '%9s' "$p")"; done
+hdr=$(printf '%-18s %-9s %10s %9s' "core type" "id" "plain" "pristine"); [ -n "$PLQ" ] && hdr="$hdr $(printf '%9s' plainq)"; for p in $XPATHS; do hdr="$hdr $(printf '%9s' "$p")"; done
 printf '%s   %-6s %-8s %s\n' "$hdr" "best" "default" "verdict"
 for k in "${TYPES[@]}"; do
 	name=$(partname ${k%:*} ${k#*:}); def=$(default_path ${k%:*} ${k#*:})
 	pl=$(avg "$k/plain"); best=plain; bh=$pl; cells=""
-	for p in plainp $XPATHS; do
+	for p in plainp ${PLQ:+plainq} $XPATHS; do
 		v=$(avg "$k/$p")
 		if [ "$v" -gt 0 ]; then cells="$cells $(printf '%9s' "$(pct $v $pl)")"; [ "$p" != plainp ] && [ "$v" -gt "$bh" ] && { best=$p; bh=$v; }
 		else cells="$cells $(printf '%9s' -)"; fi
@@ -222,7 +225,7 @@ say ""
 say "TABLE ROWS (paste these back):"
 for k in "${TYPES[@]}"; do
 	line="ROW $k $(partname ${k%:*} ${k#*:}) maxMHz=${TYPE_MAXF[$k]// MHz/} plain=$(avg "$k/plain")"
-	for p in plainp $XPATHS; do v=$(avg "$k/$p"); [ "$v" -gt 0 ] && line="$line $p=$v"; done
+	for p in plainp ${PLQ:+plainq} $XPATHS; do v=$(avg "$k/$p"); [ "$v" -gt 0 ] && line="$line $p=$v"; done
 	say "$line"
 done
 say "Log saved to $LOG"

@@ -37,7 +37,11 @@ int main(int argc, char **argv)
 
 		/* pristine: Verus2hash_pristine() in verusscan.cpp */
 		memcpy(bP + 47, bP, 16); memcpy(bP + 63, bP, 1); memcpy(bP + 32, nonce, 15);
+#ifdef PRISTINE_PRE
+		uint64_t imP = verusclhash_port2_2_nojournal_pre(keyP, bP, 511, frP, freP);   /* + preload */
+#else
 		uint64_t imP = verusclhash_port2_2_nojournal(keyP, bP, 511, frP, freP);
+#endif
 		memcpy(bP + 47, &imP, 8); memcpy(bP + 55, &imP, 8); memcpy(bP + 63, &imP, 1);
 		haraka512_keyed(hP, bP, keyP + (imP & 511));
 		verus_fixkey_pristine(frP, freP, keyP, key0);
@@ -45,6 +49,10 @@ int main(int argc, char **argv)
 		bool ok = imJ == imP && !memcmp(hJ, hP, 32) && !memcmp(keyJ, key0, sizeof(key0)) && !memcmp(keyP, key0, sizeof(key0));
 		if (!ok) { if (bad < 5) printf("mismatch at iteration %ld\n", it); bad++; }
 	}
+#ifdef PRISTINE_PRE
+	printf("pristinetest preload: %ld iterations, %ld mismatches -> %s\n", iters, bad, bad ? "FAIL" : "PASS");
+	return bad != 0;
+#endif
 	printf("pristinetest: %ld iterations, %ld mismatches -> %s\n", iters, bad, bad ? "FAIL" : "PASS");
 	return bad != 0;
 }

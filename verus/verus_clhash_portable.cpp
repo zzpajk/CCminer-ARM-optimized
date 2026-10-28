@@ -329,7 +329,7 @@ uint8x16_t _mm_aesenc_si128 (uint8x16_t a, uint8x16_t RoundKey)
 /* JOURNAL = true: the original code, which saves the old value of both key positions every round so
  * FixKey() can undo the mutations afterwards. JOURNAL = false (variant "pristine"): no saves; the caller
  * restores the touched positions from a pristine copy of the key instead (64 fewer vector stores per hash). */
-template<bool JOURNAL>
+template<bool JOURNAL, bool PRE = false>
 FORCE_INLINE __m128i verusclmul_repeat_port2_2_t(__m128i *randomsource, const __m128i buf[4], uint64_t keyMask, uint16_t * __restrict fixrand, 
 										uint16_t * __restrict fixrandex, __m128i *g_prand, __m128i *g_prandex)
 {
@@ -372,6 +372,14 @@ FORCE_INLINE __m128i verusclmul_repeat_port2_2_t(__m128i *randomsource, const __
 		// select random start and order of pbuf processing
 		pbuf = pbuf_copy + (selector & 3);
 		pbsf = pbuf - selector_fudge;
+		/* PRE: load the four operands every case starts with before the case jump (see SEL bit 512) */
+		__m128i preX, preY, preB, preS;
+		if (PRE) { preX = _mm_load_si128_emu(prand); preY = _mm_load_si128_emu(prandex); preB = _mm_load_si128_emu(pbuf); preS = _mm_load_si128_emu(pbsf); }
+		else { preX = preY = preB = preS = _mm_setzero_si128(); }
+#define VPRE_X (PRE ? preX : _mm_load_si128_emu(prand))
+#define VPRE_Y (PRE ? preY : _mm_load_si128_emu(prandex))
+#define VPRE_B (PRE ? preB : _mm_load_si128_emu(pbuf))
+#define VPRE_S (PRE ? preS : _mm_load_si128_emu(pbsf))
   
    		//fixrand[i] = prand_idx;
 		//fixrandex[i] = prandex_idx;
@@ -381,8 +389,8 @@ FORCE_INLINE __m128i verusclmul_repeat_port2_2_t(__m128i *randomsource, const __
 		{
 		case 0:
 		{
-			const __m128i temp1 = _mm_load_si128_emu(prandex);
-			const __m128i temp2 = _mm_load_si128_emu(pbsf);
+			const __m128i temp1 = VPRE_Y;
+			const __m128i temp2 = VPRE_S;
 			const __m128i add1 = _mm_xor_si128_emu(temp1, temp2);
 			const __m128i clprod1 = _mm_clmulepi64_si128_emu(add1, add1, 0x10);
 			acc = _mm_xor_si128_emu(clprod1, acc);
@@ -398,10 +406,10 @@ FORCE_INLINE __m128i verusclmul_repeat_port2_2_t(__m128i *randomsource, const __
 			const __m128i tempa1 = _mm_mulhrs_epi16_emu(acc, temp1);
 			const __m128i tempa2 = _mm_xor_si128_emu(tempa1, temp1);
 
-			const __m128i temp12 = _mm_load_si128_emu(prand);
+			const __m128i temp12 = VPRE_X;
 			_mm_store_si128_emu(prand, tempa2);
 
-			const __m128i temp22 = _mm_load_si128_emu(pbuf);
+			const __m128i temp22 = VPRE_B;
 			const __m128i add12 = _mm_xor_si128_emu(temp12, temp22);
 			const __m128i clprod12 = _mm_clmulepi64_si128_emu(add12, add12, 0x10);
 			acc = _mm_xor_si128_emu(clprod12, acc);
@@ -414,8 +422,8 @@ FORCE_INLINE __m128i verusclmul_repeat_port2_2_t(__m128i *randomsource, const __
 		}
 		case 4:
 		{
-			const __m128i temp1 = _mm_load_si128_emu(prand);
-			const __m128i temp2 = _mm_load_si128_emu(pbuf);
+			const __m128i temp1 = VPRE_X;
+			const __m128i temp2 = VPRE_B;
 			const __m128i add1 = _mm_xor_si128_emu(temp1, temp2);
 			const __m128i clprod1 = _mm_clmulepi64_si128_emu(add1, add1, 0x10);
 			acc = _mm_xor_si128_emu(clprod1, acc);
@@ -425,10 +433,10 @@ FORCE_INLINE __m128i verusclmul_repeat_port2_2_t(__m128i *randomsource, const __
 			const __m128i tempa1 = _mm_mulhrs_epi16_emu(acc, temp1);
 			const __m128i tempa2 = _mm_xor_si128_emu(tempa1, temp1);
 
-			const __m128i temp12 = _mm_load_si128_emu(prandex);
+			const __m128i temp12 = VPRE_Y;
 			_mm_store_si128_emu(prandex, tempa2);
 
-			const __m128i temp22 = _mm_load_si128_emu(pbsf);
+			const __m128i temp22 = VPRE_S;
 			const __m128i add12 = _mm_xor_si128_emu(temp12, temp22);
 			acc = _mm_xor_si128_emu(add12, acc);
 
@@ -439,18 +447,18 @@ FORCE_INLINE __m128i verusclmul_repeat_port2_2_t(__m128i *randomsource, const __
 		}
 		case 8:
 		{
-			const __m128i temp1 = _mm_load_si128_emu(prandex);
-			const __m128i temp2 = _mm_load_si128_emu(pbuf);
+			const __m128i temp1 = VPRE_Y;
+			const __m128i temp2 = VPRE_B;
 			const __m128i add1 = _mm_xor_si128_emu(temp1, temp2);
 			acc = _mm_xor_si128_emu(add1, acc);
 
 			const __m128i tempa1 = _mm_mulhrs_epi16_emu(acc, temp1);
 			const __m128i tempa2 = _mm_xor_si128_emu(tempa1, temp1);
 
-			const __m128i temp12 = _mm_load_si128_emu(prand);
+			const __m128i temp12 = VPRE_X;
 			_mm_store_si128_emu(prand, tempa2);
 
-			const __m128i temp22 = _mm_load_si128_emu(pbsf);
+			const __m128i temp22 = VPRE_S;
 			const __m128i add12 = _mm_xor_si128_emu(temp12, temp22);
 			const __m128i clprod12 = _mm_clmulepi64_si128_emu(add12, add12, 0x10);
 			acc = _mm_xor_si128_emu(clprod12, acc);
@@ -464,8 +472,8 @@ FORCE_INLINE __m128i verusclmul_repeat_port2_2_t(__m128i *randomsource, const __
 		}
 		case 0xc:
 		{
-			const __m128i temp1 = _mm_load_si128_emu(prand);
-			const __m128i temp2 = _mm_load_si128_emu(pbsf);
+			const __m128i temp1 = VPRE_X;
+			const __m128i temp2 = VPRE_S;
 			const __m128i add1 = _mm_xor_si128_emu(temp1, temp2);
 
 			// cannot be zero here
@@ -483,10 +491,10 @@ FORCE_INLINE __m128i verusclmul_repeat_port2_2_t(__m128i *randomsource, const __
 
 			if (dividend & 1)
 			{
-				const __m128i temp12 = _mm_load_si128_emu(prandex);
+				const __m128i temp12 = VPRE_Y;
 				_mm_store_si128_emu(prandex, tempa2);
 
-				const __m128i temp22 = _mm_load_si128_emu(pbuf);
+				const __m128i temp22 = VPRE_B;
 				const __m128i add12 = _mm_xor_si128_emu(temp12, temp22);
 				const __m128i clprod12 = _mm_clmulepi64_si128_emu(add12, add12, 0x10);
 				acc = _mm_xor_si128_emu(clprod12, acc);
@@ -499,9 +507,9 @@ FORCE_INLINE __m128i verusclmul_repeat_port2_2_t(__m128i *randomsource, const __
 			}
 			else
 			{
-				*prand = *prandex;
+				*prand = VPRE_Y;
 				_mm_store_si128_emu(prandex, tempa2);
-				const __m128i tempb4 = _mm_load_si128_emu(pbuf);
+				const __m128i tempb4 = VPRE_B;
 				acc = _mm_xor_si128_emu(tempb4, acc);
 			}
 			break;
@@ -512,8 +520,8 @@ FORCE_INLINE __m128i verusclmul_repeat_port2_2_t(__m128i *randomsource, const __
 			const __m128i *rc = prand;
 			__m128i tmp;
 
-			__m128i temp1 = _mm_load_si128_emu(pbsf);
-			__m128i temp2 = _mm_load_si128_emu(pbuf);
+			__m128i temp1 = VPRE_S;
+			__m128i temp2 = VPRE_B;
 
 			AES2(temp1, temp2, 0);
 			MIX2_EMU(temp1, temp2);
@@ -527,10 +535,10 @@ FORCE_INLINE __m128i verusclmul_repeat_port2_2_t(__m128i *randomsource, const __
 			acc = _mm_xor_si128_emu(temp1, acc);
 			acc = _mm_xor_si128_emu(temp2, acc);
 
-			const __m128i tempa1 = _mm_load_si128_emu(prand);
+			const __m128i tempa1 = VPRE_X;
 			const __m128i tempa2 = _mm_mulhrs_epi16_emu(acc, tempa1);
 
-			*prand = *prandex;
+			*prand = VPRE_Y;
 			*prandex = _mm_xor_si128_emu(tempa1, tempa2);
 			break;
 		}
@@ -632,9 +640,9 @@ FORCE_INLINE __m128i verusclmul_repeat_port2_2_t(__m128i *randomsource, const __
                         }
 
 
-			const __m128i tempa1 = _mm_load_si128_emu(prand);
+			const __m128i tempa1 = VPRE_X;
 			const __m128i tempa2 = _mm_mulhrs_epi16_emu(acc, tempa1);
-			*prand = *prandex;
+			*prand = VPRE_Y;
 			*prandex = _mm_xor_si128_emu(tempa1, tempa2);
 
 			break;
@@ -702,14 +710,14 @@ FORCE_INLINE __m128i verusclmul_repeat_port2_2_t(__m128i *randomsource, const __
                 }
 
 
-                *prand = _mm_xor_si128_emu(*prandex, acc);
+                *prand = _mm_xor_si128_emu(VPRE_Y, acc);
                 _mm_store_si128_emu(prandex, onekey);
                 break;
             }
 		default: 
 		{
-			const __m128i temp1 = _mm_load_si128_emu(pbuf);
-			const __m128i temp2 = _mm_load_si128_emu(prandex);
+			const __m128i temp1 = VPRE_B;
+			const __m128i temp2 = VPRE_Y;
 			const __m128i add1 = _mm_xor_si128_emu(temp1, temp2);
 			const __m128i clprod1 = _mm_clmulepi64_si128_emu(add1, add1, 0x10);
 			acc = _mm_xor_si128_emu(clprod1, acc);
@@ -717,11 +725,11 @@ FORCE_INLINE __m128i verusclmul_repeat_port2_2_t(__m128i *randomsource, const __
 			const __m128i tempa1 = _mm_mulhrs_epi16_emu(acc, temp2);
 			const __m128i tempa2 = _mm_xor_si128_emu(tempa1, temp2);
 
-			const __m128i tempa3 = _mm_load_si128_emu(prand);
+			const __m128i tempa3 = VPRE_X;
 			_mm_store_si128_emu(prand, tempa2);
 
 			acc = _mm_xor_si128_emu(tempa3, acc);
-			const __m128i temp4 = _mm_load_si128_emu(pbsf);
+			const __m128i temp4 = VPRE_S;
 			acc = _mm_xor_si128(temp4, acc);
 			const __m128i tempb1 = _mm_mulhrs_epi16_emu(acc, tempa3);
 			const __m128i tempb2 = _mm_xor_si128_emu(tempb1, tempa3);
@@ -734,6 +742,10 @@ FORCE_INLINE __m128i verusclmul_repeat_port2_2_t(__m128i *randomsource, const __
 	}
 	return acc;
 }
+#undef VPRE_X
+#undef VPRE_Y
+#undef VPRE_B
+#undef VPRE_S
 
 __m128i __verusclmulwithoutreduction64alignedrepeat_port2_2(__m128i *randomsource, const __m128i buf[4], uint64_t keyMask, uint16_t * __restrict fixrand, 
 										uint16_t * __restrict fixrandex, __m128i *g_prand, __m128i *g_prandex)
@@ -810,6 +822,16 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 		// select random start and order of pbuf processing
 		pbuf = pbuf_copy + (selector & 3);
 		pbsf = pbuf - selector_fudge;
+		/* SEL bit 9 (512), "preload": every case starts by reading *prand, *prandex, *pbuf and *pbsf (before
+		 * any store of the round), so they are loaded here, BEFORE the unpredictable case jump. After a
+		 * mispredict the case then starts with its operands ready instead of waiting for the loads. */
+		__m128i preX, preY, preB, preS;
+		if (SEL & 512) { preX = _mm_load_si128_emu(prand); preY = _mm_load_si128_emu(prandex); preB = _mm_load_si128_emu(pbuf); preS = _mm_load_si128_emu(pbsf); }
+		else { preX = preY = preB = preS = _mm_setzero_si128(); }
+#define VPRE_X ((SEL & 512) ? preX : _mm_load_si128_emu(prand))
+#define VPRE_Y ((SEL & 512) ? preY : _mm_load_si128_emu(prandex))
+#define VPRE_B ((SEL & 512) ? preB : _mm_load_si128_emu(pbuf))
+#define VPRE_S ((SEL & 512) ? preS : _mm_load_si128_emu(pbsf))
   
    		//fixrand[i] = prand_idx;
 		//fixrandex[i] = prandex_idx;
@@ -843,8 +865,8 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 			break;
 		}
 		{
-			const __m128i temp1 = _mm_load_si128_emu(prandex);
-			const __m128i temp2 = _mm_load_si128_emu(pbsf);
+			const __m128i temp1 = VPRE_Y;
+			const __m128i temp2 = VPRE_S;
 			const __m128i add1 = _mm_xor_si128_emu(temp1, temp2);
 			const __m128i clprod1 = _mm_clmulepi64_si128_emu(add1, add1, 0x10);
 			acc = _mm_xor_si128_emu(clprod1, acc);
@@ -852,10 +874,10 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 			const __m128i tempa1 = _mm_mulhrs_epi16_emu(acc, temp1);
 			const __m128i tempa2 = _mm_xor_si128_emu(tempa1, temp1);
 
-			const __m128i temp12 = _mm_load_si128_emu(prand);
+			const __m128i temp12 = VPRE_X;
 			_mm_store_si128_emu(prand, tempa2);
 
-			const __m128i temp22 = _mm_load_si128_emu(pbuf);
+			const __m128i temp22 = VPRE_B;
 			const __m128i add12 = _mm_xor_si128_emu(temp12, temp22);
 			const __m128i clprod12 = _mm_clmulepi64_si128_emu(add12, add12, 0x10);
 			acc = _mm_xor_si128_emu(clprod12, acc);
@@ -866,8 +888,8 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 		}
 		case 4:
 		{
-			const __m128i temp1 = _mm_load_si128_emu(prand);
-			const __m128i temp2 = _mm_load_si128_emu(pbuf);
+			const __m128i temp1 = VPRE_X;
+			const __m128i temp2 = VPRE_B;
 			const __m128i add1 = _mm_xor_si128_emu(temp1, temp2);
 			const __m128i clprod1 = _mm_clmulepi64_si128_emu(add1, add1, 0x10);
 			acc = _mm_xor_si128_emu(clprod1, acc);
@@ -877,10 +899,10 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 			const __m128i tempa1 = _mm_mulhrs_epi16_emu(acc, temp1);
 			const __m128i tempa2 = _mm_xor_si128_emu(tempa1, temp1);
 
-			const __m128i temp12 = _mm_load_si128_emu(prandex);
+			const __m128i temp12 = VPRE_Y;
 			_mm_store_si128_emu(prandex, tempa2);
 
-			const __m128i temp22 = _mm_load_si128_emu(pbsf);
+			const __m128i temp22 = VPRE_S;
 			const __m128i add12 = _mm_xor_si128_emu(temp12, temp22);
 			acc = _mm_xor_si128_emu(add12, acc);
 
@@ -891,18 +913,18 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 		}
 		case 8:
 		{
-			const __m128i temp1 = _mm_load_si128_emu(prandex);
-			const __m128i temp2 = _mm_load_si128_emu(pbuf);
+			const __m128i temp1 = VPRE_Y;
+			const __m128i temp2 = VPRE_B;
 			const __m128i add1 = _mm_xor_si128_emu(temp1, temp2);
 			acc = _mm_xor_si128_emu(add1, acc);
 
 			const __m128i tempa1 = _mm_mulhrs_epi16_emu(acc, temp1);
 			const __m128i tempa2 = _mm_xor_si128_emu(tempa1, temp1);
 
-			const __m128i temp12 = _mm_load_si128_emu(prand);
+			const __m128i temp12 = VPRE_X;
 			_mm_store_si128_emu(prand, tempa2);
 
-			const __m128i temp22 = _mm_load_si128_emu(pbsf);
+			const __m128i temp22 = VPRE_S;
 			const __m128i add12 = _mm_xor_si128_emu(temp12, temp22);
 			const __m128i clprod12 = _mm_clmulepi64_si128_emu(add12, add12, 0x10);
 			acc = _mm_xor_si128_emu(clprod12, acc);
@@ -916,8 +938,8 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 		}
 		case 0xc:
 		{
-			const __m128i temp1 = _mm_load_si128_emu(prand);
-			const __m128i temp2 = _mm_load_si128_emu(pbsf);
+			const __m128i temp1 = VPRE_X;
+			const __m128i temp2 = VPRE_S;
 			const __m128i add1 = _mm_xor_si128_emu(temp1, temp2);
 
 			// cannot be zero here
@@ -940,8 +962,8 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 				 *   odd:  *prandex = tempa2; acc ^= clmul(Y ^ Q) ^ clmul(Q); *prand = mulhrs(acc, Y) ^ Y
 				 *   even: *prand = Y;        *prandex = tempa2;              acc ^= Q */
 				const uint64_t odd = (uint64_t)dividend & 1;
-				const __m128i Y = _mm_load_si128_emu(prandex);
-				const __m128i Q = _mm_load_si128_emu(pbuf);
+				const __m128i Y = VPRE_Y;
+				const __m128i Q = VPRE_B;
 				const uint64x2_t m = vdupq_n_u64(0 - odd);
 				const __m128i v = _mm_xor_si128_emu(Y, Q);
 				const __m128i fodd = _mm_xor_si128_emu(_mm_clmulepi64_si128_emu(v, v, 0x10), _mm_clmulepi64_si128_emu(Q, Q, 0x10));
@@ -954,10 +976,10 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 			} else
 			if (dividend & 1)
 			{
-				const __m128i temp12 = _mm_load_si128_emu(prandex);
+				const __m128i temp12 = VPRE_Y;
 				_mm_store_si128_emu(prandex, tempa2);
 
-				const __m128i temp22 = _mm_load_si128_emu(pbuf);
+				const __m128i temp22 = VPRE_B;
 				const __m128i add12 = _mm_xor_si128_emu(temp12, temp22);
 				const __m128i clprod12 = _mm_clmulepi64_si128_emu(add12, add12, 0x10);
 				acc = _mm_xor_si128_emu(clprod12, acc);
@@ -970,9 +992,9 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 			}
 			else
 			{
-				*prand = *prandex;
+				*prand = VPRE_Y;
 				_mm_store_si128_emu(prandex, tempa2);
-				const __m128i tempb4 = _mm_load_si128_emu(pbuf);
+				const __m128i tempb4 = VPRE_B;
 				acc = _mm_xor_si128_emu(tempb4, acc);
 			}
 			break;
@@ -983,8 +1005,8 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 			const __m128i *rc = prand;
 			__m128i tmp;
 
-			__m128i temp1 = _mm_load_si128_emu(pbsf);
-			__m128i temp2 = _mm_load_si128_emu(pbuf);
+			__m128i temp1 = VPRE_S;
+			__m128i temp2 = VPRE_B;
 
 			AES2(temp1, temp2, 0);
 			MIX2_EMU(temp1, temp2);
@@ -998,10 +1020,10 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 			acc = _mm_xor_si128_emu(temp1, acc);
 			acc = _mm_xor_si128_emu(temp2, acc);
 
-			const __m128i tempa1 = _mm_load_si128_emu(prand);
+			const __m128i tempa1 = VPRE_X;
 			const __m128i tempa2 = _mm_mulhrs_epi16_emu(acc, tempa1);
 
-			*prand = *prandex;
+			*prand = VPRE_Y;
 			*prandex = _mm_xor_si128_emu(tempa1, tempa2);
 			break;
 		}
@@ -1105,9 +1127,9 @@ if (SEL & 1) {
 			}
 
 
-			const __m128i tempa1 = _mm_load_si128_emu(prand);
+			const __m128i tempa1 = VPRE_X;
 			const __m128i tempa2 = _mm_mulhrs_epi16_emu(acc, tempa1);
-			*prand = *prandex;
+			*prand = VPRE_Y;
 			*prandex = _mm_xor_si128_emu(tempa1, tempa2);
 
 			break;
@@ -1198,14 +1220,14 @@ if (SEL & 2) {
                 }
 
 
-                *prand = _mm_xor_si128_emu(*prandex, acc);
+                *prand = _mm_xor_si128_emu(VPRE_Y, acc);
                 _mm_store_si128_emu(prandex, onekey);
                 break;
             }
 		default: 
 		{
-			const __m128i temp1 = _mm_load_si128_emu(pbuf);
-			const __m128i temp2 = _mm_load_si128_emu(prandex);
+			const __m128i temp1 = VPRE_B;
+			const __m128i temp2 = VPRE_Y;
 			const __m128i add1 = _mm_xor_si128_emu(temp1, temp2);
 			const __m128i clprod1 = _mm_clmulepi64_si128_emu(add1, add1, 0x10);
 			acc = _mm_xor_si128_emu(clprod1, acc);
@@ -1213,11 +1235,11 @@ if (SEL & 2) {
 			const __m128i tempa1 = _mm_mulhrs_epi16_emu(acc, temp2);
 			const __m128i tempa2 = _mm_xor_si128_emu(tempa1, temp2);
 
-			const __m128i tempa3 = _mm_load_si128_emu(prand);
+			const __m128i tempa3 = VPRE_X;
 			_mm_store_si128_emu(prand, tempa2);
 
 			acc = _mm_xor_si128_emu(tempa3, acc);
-			const __m128i temp4 = _mm_load_si128_emu(pbsf);
+			const __m128i temp4 = VPRE_S;
 			acc = _mm_xor_si128(temp4, acc);
 			const __m128i tempb1 = _mm_mulhrs_epi16_emu(acc, tempa3);
 			const __m128i tempb2 = _mm_xor_si128_emu(tempb1, tempa3);
@@ -1229,6 +1251,10 @@ if (SEL & 2) {
    
 	}
 
+#undef VPRE_X
+#undef VPRE_Y
+#undef VPRE_B
+#undef VPRE_S
 /* N independent nonces in lockstep (N = 2..4), each lane with its own key. Round code is the same as the
  * single-nonce loop; only the order of execution differs. */
 template<int N, int SEL>
@@ -1334,6 +1360,12 @@ template void verusclhash_port2_2_xN<2, 128>(void **, const unsigned char **, ui
 template void verusclhash_port2_2_xN<2, 131>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<2, 163>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<2, 227>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 512>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 515>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 547>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 640>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 643>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 675>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<3, 0>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<4, 0>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 /* BEGIN GENERATED x2fuse (tools/gen_fuse.py) */
@@ -3396,6 +3428,13 @@ uint64_t verusclhash_port2_2(void * random, const unsigned char buf[64], uint64_
 uint64_t verusclhash_port2_2_nojournal(void * random, const unsigned char buf[64], uint64_t keyMask, uint16_t *  __restrict fixrand,
 		uint16_t * __restrict fixrandex) {
     __m128i  acc = verusclmul_repeat_port2_2_t<false>((__m128i *)random, (const __m128i *)buf, keyMask, fixrand, fixrandex, 0, 0);
+    acc = _mm_xor_si128_emu(acc, _mm_cvtsi32_si128_emu(0x10000));
+    return precompReduction64_port(acc);
+}
+/* the same with the four common operands loaded before the case jump ("preload", VERUS_PRE1=1) */
+uint64_t verusclhash_port2_2_nojournal_pre(void * random, const unsigned char buf[64], uint64_t keyMask, uint16_t *  __restrict fixrand,
+		uint16_t * __restrict fixrandex) {
+    __m128i  acc = verusclmul_repeat_port2_2_t<false, true>((__m128i *)random, (const __m128i *)buf, keyMask, fixrand, fixrandex, 0, 0);
     acc = _mm_xor_si128_emu(acc, _mm_cvtsi32_si128_emu(0x10000));
     return precompReduction64_port(acc);
 }
