@@ -6,7 +6,7 @@ set -eu
 C=$(git rev-parse "${1:-HEAD}")
 PIN=9ea69fdfc74564315a07f9f910ea701a2da9bb50
 S=tools/verus-ref-bench.sh
-PATHS=(ccminer.conf ccminer.cpp tests verus tools/gen_fuse.py ':(exclude)*.o')
+PATHS=(ccminer.conf ccminer.cpp api.cpp serialize.hpp tests verus tools/gen_fuse.py ':(exclude)*.o')
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 git diff "$PIN..$C" -- "${PATHS[@]}" > "$T/p.diff"
 gzip -9n < "$T/p.diff" | base64 > "$T/p.b64"

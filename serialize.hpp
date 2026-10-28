@@ -38,6 +38,9 @@
 #define be64toh(x) OSSwapBigToHostInt64(x)
 #define le64toh(x) OSSwapLittleToHostInt64(x)
 #endif
+#if defined(__ANDROID__) || defined(__linux__)
+#include <endian.h>   /* htole16/le32toh...: glibc pulls this in via <string>, Android's bionic (Termux) does not */
+#endif
 
 class CScript;
 
