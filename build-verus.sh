@@ -6,8 +6,10 @@
 #                                                       a pristine copy instead of a per-round journal
 #   Mongoose M1/M2, Cortex-A73                        two nonces hashed side by side
 #   every other big core (Mongoose M3-M5, A75-A78, X1)  two nonces side by side + branch-free choices
-# Compiler: clang 17 when it can be installed (measured +2-3% over clang 10/14 on 5 phones, clang 18 and
-# GCC were slower); otherwise the system clang.
+# Compiler: clang 17 when it can be installed (measured +2-3% over clang 10/14 on 5 phones, GCC slower);
+# otherwise the system clang. With clang 18 or newer (e.g. Termux) the script restores jump tables for small
+# switches (LLVM 18 stopped using them below 13 cases on AArch64, which turns the hash's 8-way case switch into
+# a tree of unpredictable branches: -4..-5% on the phones, measured both ways on a Galaxy S9).
 # Measured on Exynos phones (all cores, vs the unmodified miner): S8 +13%, S9 +20%, S10 +21%, S20 +17..19%,
 # S21 +12%, before the clang 17 gain. No dev fee, no donation code, no hardcoded pool or wallet.
 #
@@ -89,6 +91,13 @@ probe -mllvm -enable-loop-distribute || RMF="$RMF|-mllvm -enable-loop-distribute
 if ! probe -O3 -flto -fuse-ld=lld; then RMF="$RMF|-flto|-fuse-ld=lld|-Wl,-hugetlbfs-align"
 elif ! probe -fuse-ld=lld -Wl,-hugetlbfs-align; then RMF="$RMF|-Wl,-hugetlbfs-align"; fi
 RMF=${RMF#|}
+CMAJ=$("$CLANG" --version 2>/dev/null | grep -o 'version [0-9]*' | head -1 | awk '{print $2}')
+JT=""
+if [ "${CMAJ:-0}" -ge 18 ] 2>/dev/null; then
+  JT="-aarch64-min-jump-table-entries=4"
+  probe -mllvm "$JT" || JT=""
+  [ -n "$JT" ] && echo "  clang $CMAJ: restoring jump tables for small switches ($JT)"
+fi
 [ -n "$RMF" ] && echo "  not supported here, building without: $(echo "$RMF" | tr '|' ' ')"
 
 echo "[4/5] Building (log: $WORK/build.log)..."
@@ -98,6 +107,7 @@ B="$WORK/build"; rm -rf "$B"; mkdir -p "$B"
 ( cd "$B" && rm -f config.status && \
   { if [ -n "$CCD" ]; then sed -i "s#CXX=clang++ CC=clang#CXX=$CCD/clang++ CC=$CCD/clang#" configure.sh; fi; true; } && \
   { if [ -n "$RMF" ]; then echo "$RMF" | tr '|' '\n' | while IFS= read -r f; do sed -i "s# $f##g" configure.sh; done; fi; true; } && \
+  { if [ -n "$JT" ]; then sed -i "s#^extracflags=\"#extracflags=\"-mllvm $JT #" configure.sh; sed -i "s#LDFLAGS=\"-v -flto#LDFLAGS=\"-v -flto -Wl,-mllvm,$JT#" configure.sh; fi; true; } && \
   sh ./configure.sh && make -j"$JOBS" CPPFLAGS="-DVERUS_X2 -DVERUS_AUTO -DVERUS_PERCORE -DVERUS_PRISTINE" ) >"$WORK/build.log" 2>&1
 if [ ! -x "$B/ccminer" ] || ! grep -q 'baseline+x2percore+pristine' "$B/ccminer"; then
   echo "BUILD FAILED. Last lines of $WORK/build.log:"; tail -25 "$WORK/build.log"; exit 1
