@@ -34,12 +34,13 @@
 #   -a  also run the all-core comparison    -A  also test the x2 paths on in-order cores (normally skipped)
 #   -P  two-nonce paths to run, e.g. -P "sel2 light selc lightc"
 #   -Q  also run plainq (single-nonce loop + preload) on every core type
+#   -C  build with clang NN from /usr/lib/llvm-NN (default: the system clang), e.g. -C 17
 #   -L  extra single-nonce paths for in-order cores, e.g. -L "q128 q160 q192" (qN: VERUS_SEL1=N)
 set -u
-DUR=20; ROUNDS=2; COOL=8; BIN=""; BINP=""; BRANCH="variants"; ALLCORE=0; ALLINORDER=0; XPATHS="x2 sel sel2 fuse fuse2"; PLQ=""; LPATHS=""
+DUR=20; ROUNDS=2; COOL=8; BIN=""; BINP=""; BRANCH="variants"; ALLCORE=0; ALLINORDER=0; XPATHS="x2 sel sel2 fuse fuse2"; PLQ=""; LPATHS=""; CCV=""
 REPO="https://github.com/zzpajk/CCminer-ARM-optimized.git"
-while getopts "d:r:c:b:p:B:P:L:QaAh" o; do
-	case "$o" in d) DUR=$OPTARG;; r) ROUNDS=$OPTARG;; c) COOL=$OPTARG;; b) BIN=$OPTARG;; p) BINP=$OPTARG;; B) BRANCH=$OPTARG;; P) XPATHS=$OPTARG;; L) LPATHS=$OPTARG;; Q) PLQ=1;;
+while getopts "d:r:c:b:p:B:P:L:C:QaAh" o; do
+	case "$o" in d) DUR=$OPTARG;; r) ROUNDS=$OPTARG;; c) COOL=$OPTARG;; b) BIN=$OPTARG;; p) BINP=$OPTARG;; B) BRANCH=$OPTARG;; P) XPATHS=$OPTARG;; L) LPATHS=$OPTARG;; C) CCV=$OPTARG;; Q) PLQ=1;;
 		a) ALLCORE=1;; A) ALLINORDER=1;; *) sed -n '2,34p' "$0"; exit 0;; esac
 done
 WORK="${VERUS_SWEEP_DIR:-$HOME/verus-sweep}"
@@ -119,7 +120,13 @@ if [ -z "$BIN" ]; then
 		  find . -name '*.o' -delete; rm -f ccminer *.opt.yaml config.status
 		  # older clang (e.g. clang 10 on Ubuntu 20.04) does not know -ffinite-loops
 		  echo 'int main(){return 0;}' > fl.c
+		  if [ -n "$CCV" ]; then
+		    [ -x "/usr/lib/llvm-$CCV/bin/clang" ] || { echo "clang $CCV not installed"; exit 1; }
+		    sed -i "s#CXX=clang++ CC=clang#CXX=/usr/lib/llvm-$CCV/bin/clang++ CC=/usr/lib/llvm-$CCV/bin/clang#" configure.sh
+		    /usr/lib/llvm-$CCV/bin/clang -ffinite-loops -c fl.c -o fl.o 2>/dev/null || sed -i 's/-ffinite-loops //' configure.sh
+		  else
 		  clang -ffinite-loops -c fl.c -o fl.o 2>/dev/null || sed -i 's/-ffinite-loops //' configure.sh
+		  fi
 		  sh ./configure.sh > configure.log 2>&1 || { tail -20 configure.log; exit 1; }
 		  make -j"$NCPU" CPPFLAGS="$2" > make.log 2>&1 || { grep -E 'error' make.log | head -20; exit 1; } ) || exit 1
 		cp "build-$1/ccminer" "$WORK/ccminer-$1-$rev"
