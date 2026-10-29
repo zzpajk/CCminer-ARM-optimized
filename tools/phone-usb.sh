@@ -53,6 +53,9 @@ R 'dumpsys usb' | tr -s ' ' | grep -E 'device_address|manufacturer=|product=|tim
 echo "== Type-C / CCIC sysfs"
 R 'for f in /sys/class/typec/*/* /sys/class/sec/ccic/* /sys/class/sec/switch/* /sys/class/power_supply/otg/* /sys/class/power_supply/usb/online /sys/class/power_supply/usb/type /sys/class/power_supply/battery/online; do [ -f "$f" ] && [ -r "$f" ] && printf "%s = %s\n" "$f" "$(head -c 200 "$f" 2>/dev/null | tr "\n" " ")"; done' | grep -v 'uevent\|Permission' | head -80
 echo "== props"; R 'getprop | grep -iE "usb|otg"' | head -20
-echo "== network"; R 'ls /sys/class/net; ip -br addr 2>/dev/null'; R 'pm list features | grep -i ethernet' || echo "(no android.hardware.ethernet feature)"
+echo "== network"; R 'ls /sys/class/net; ip -br addr 2>/dev/null; echo "-- neighbours"; ip neigh 2>/dev/null; echo "-- rndis/ncm/usb iface stats"; for i in /sys/class/net/rndis* /sys/class/net/usb* /sys/class/net/ncm*; do [ -d $i ] && echo "${i##*/} oper=$(cat $i/operstate) rx=$(cat $i/statistics/rx_packets) tx=$(cat $i/statistics/tx_packets)"; done'
+echo "== tethering"; R 'dumpsys tethering 2>/dev/null | grep -iE "state|iface|usb|rndis|ncm|downstream|upstream|dhcp|lease|error" | head -40'
+echo "== gadget log"; R "dmesg | grep -iE 'rndis|ncm|gadget|android_work|configfs|set_config|usb_ep|ipa|tether' | tail -25"
+ R 'pm list features | grep -i ethernet' || echo "(no android.hardware.ethernet feature)"
 echo "== kernel log (USB / Type-C related, last 60)"
 R "dmesg | grep -vE 'sec-battery|dhd|SSP|audit|CFG80211|BAR0' | grep -iE 'usb|otg|xhci|dwc|ccic|pdic|muic|typec|cc_|rprd|vbus|ax88|asix|r815|cdc|eth[0-9]' | tail -60"
