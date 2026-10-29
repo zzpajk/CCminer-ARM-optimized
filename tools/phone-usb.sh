@@ -2,6 +2,8 @@
 # phone-usb.sh [snapshot|watch SECONDS] - read-only USB / USB-C role diagnostics for a rooted phone.
 # snapshot: port role, Samsung cable type, enumerated USB devices (with vendor names), dumpsys usb,
 #           Type-C/CCIC sysfs, network interfaces and the USB-related kernel log.
+# kernel:   kernel version, module support/signing, loaded modules, build props and the full kernel config
+#           (what is needed to build matching driver modules).
 # watch N:  samples the role / cable type / device list every 2 s for N seconds (max 600) and prints
 #           every change, so someone can replug or flip a cable and see what the phone makes of it.
 # Changes nothing: only reads files, dmesg and dumpsys (through su).
@@ -22,6 +24,16 @@ state() { # one line: cable, port role, usb device ids
 	devs=$(R 'for d in /sys/bus/usb/devices/*; do [ -f $d/idVendor ] && printf "%s:%s " $(cat $d/idVendor) $(cat $d/idProduct); done')
 	echo "cable=${cab:-?} | ${role:-role ?} | usb=[${devs% }]"
 }
+if [ "$mode" = kernel ]; then
+	echo "== uname"; R 'uname -a; cat /proc/version'
+	echo "== props"; R 'getprop | grep -E "ro.lineage|ro.build.(fingerprint|version.release|date|id)|ro.product.(device|model)|ro.boot.bootloader|ro.bootimage|ro.build.flavor"'
+	echo "== module support"; R 'zcat /proc/config.gz | grep -E "^CONFIG_MODULES|MODULE_SIG|MODVERSIONS|MODULE_FORCE|MODULE_UNLOAD|CONFIG_LOCALVERSION|CONFIG_CC_|STRICT_MEMORY|CONFIG_KALLSYMS=|TIMA|RKP|LKM|CONFIG_MII|USB_NET|USBNET|CDC|_NCM|RNDIS|SR9|CH9|R8152"'
+	echo "== loaded modules"; R 'cat /proc/modules | head -40; echo "(count $(wc -l < /proc/modules))"'
+	echo "== module dirs"; R 'ls -la /vendor/lib/modules /system/lib/modules /lib/modules /vendor_dlkm/lib/modules 2>&1 | head -30'
+	echo "== modprobe/insmod"; R 'which insmod modprobe; ls -la /proc/sys/kernel/modules_disabled 2>&1; cat /proc/sys/kernel/modules_disabled 2>&1'
+	echo "== full kernel config"; R 'zcat /proc/config.gz'
+	exit 0
+fi
 if [ "$mode" = watch ]; then
 	echo "watching for $secs s (2 s steps); replug / flip the cable now"
 	prev=""; end=$((SECONDS + secs))
