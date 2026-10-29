@@ -14,13 +14,14 @@
 #   bash phone-runner.sh start|stop|status|log
 #
 # Jobs repo layout (written by Claude):    jobs/NAME/<id>.job
-#   script=bench | sweep | info | led | cpuset | runner-update   (led: arg=cyan|magenta|...|off; cpuset: arg=show|widen|restore)
+#   script=bench | sweep | info | led | cpuset | usb | runner-update   (led: arg=cyan|magenta|...|off; cpuset: arg=show|widen|restore;
+#          usb: arg=snapshot  or  arg=watch + arg=SECONDS, read-only USB/Type-C diagnostics)
 #   commit=<fork commit, full 40-hex SHA> (not needed for info)
 #   arg=<one argument per line>          e.g.  arg=-v   then   arg=baseline x2auto x2percore
 #   timeout=<minutes>                    optional, default 240
 # Results (written by the phone):         results/NAME/<id>/{status,console.log,report.txt}, results/NAME/heartbeat.txt
 set -u
-RUNNER_VERSION=1.6.3
+RUNNER_VERSION=1.6.4
 JOBS_REPO="${VERUS_JOBS_REPO:-git@github.com:zzpajk/verus-phone-jobs.git}"
 FORK="${VERUS_FORK:-https://github.com/zzpajk/CCminer-ARM-optimized.git}"
 CONF="$HOME/.verus-runner.conf"
@@ -113,7 +114,7 @@ run_job() { # job-file
 	done < "$f"
 	set +f
 	case "$tmo" in ''|*[!0-9]*) tmo=240;; esac
-	case "$script" in bench|sweep|led|cpuset|runner-update) case "$commit" in [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) ;; *)
+	case "$script" in bench|sweep|led|cpuset|usb|runner-update) case "$commit" in [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) ;; *)
 		echo "failed $(date '+%F %T') bad commit: $commit" > "$R/status"; push_results "job $id rejected"; return;; esac;;
 	info) ;; *) echo "failed $(date '+%F %T') unknown script: $script" > "$R/status"; push_results "job $id rejected"; return;; esac
 	case "$commit" in *[!0-9a-f]*) echo "failed $(date '+%F %T') bad commit: $commit" > "$R/status"; push_results "job $id rejected"; return;; esac
@@ -143,6 +144,9 @@ run_job() { # job-file
 	cpuset)
 		path=$(fetch_script "$commit" phone-cpuset.sh) && timeout 60 bash "$path" "${args[@]}" > "$R/console.log" 2>&1; rc=$?
 		[ -n "$path" ] || { echo "could not fetch phone-cpuset.sh at $commit" > "$R/console.log"; rc=1; };;
+	usb)
+		path=$(fetch_script "$commit" phone-usb.sh) && timeout 700 bash "$path" "${args[@]}" > "$R/console.log" 2>&1; rc=$?
+		[ -n "$path" ] || { echo "could not fetch phone-usb.sh at $commit" > "$R/console.log"; rc=1; };;
 	led)
 		path=$(fetch_script "$commit" phone-led.sh) && timeout 60 bash "$path" "${args[@]}" > "$R/console.log" 2>&1; rc=$?
 		[ -n "$path" ] || { echo "could not fetch phone-led.sh at $commit" > "$R/console.log"; rc=1; };;
