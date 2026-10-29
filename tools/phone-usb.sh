@@ -4,6 +4,9 @@
 #           Type-C/CCIC sysfs, network interfaces and the USB-related kernel log.
 # kernel:   kernel version, module support/signing, loaded modules, build props and the full kernel config
 #           (what is needed to build matching driver modules).
+# force-source N: TEMPORARILY writes "source" to /sys/class/typec/port0/port_type (phone acts as power source
+#           and USB host only), watches N s (max 300), lists any USB devices / interfaces that appear, then restores
+#           the original port_type (also on exit/kill). The only mode that changes anything.
 # watch N:  samples the role / cable type / device list every 2 s for N seconds (max 600) and prints
 #           every change, so someone can replug or flip a cable and see what the phone makes of it.
 # Changes nothing: only reads files, dmesg and dumpsys (through su).
@@ -20,7 +23,7 @@ vname() { case "$1" in 0bda) echo Realtek;; 0b95) echo ASIX;; 2109) echo "VIA La
 state() { # one line: cable, port role, usb device ids
 	local cab role devs
 	cab=$(R 'dmesg | grep sec_bat_monitor_work | tail -1' | grep -o 'Cable([^)]*)')
-	role=$(R 'dumpsys usb' | tr -s ' \n' ' ' | grep -o 'current_mode=[a-z]* power_role=[a-z]* data_role=[a-z]*' | head -1)
+	role=$(R 'cd /sys/class/typec/port0 2>/dev/null && echo "type=$(cat port_type) power=$(cat power_role) data=$(cat data_role) partner=$([ -d ../port0-partner ] && echo yes || echo no)"')
 	devs=$(R 'for d in /sys/bus/usb/devices/*; do [ -f $d/idVendor ] && printf "%s:%s " $(cat $d/idVendor) $(cat $d/idProduct); done')
 	echo "cable=${cab:-?} | ${role:-role ?} | usb=[${devs% }]"
 }
@@ -32,6 +35,30 @@ if [ "$mode" = kernel ]; then
 	echo "== module dirs"; R 'ls -la /vendor/lib/modules /system/lib/modules /lib/modules /vendor_dlkm/lib/modules 2>&1 | head -30'
 	echo "== modprobe/insmod"; R 'which insmod modprobe; ls -la /proc/sys/kernel/modules_disabled 2>&1; cat /proc/sys/kernel/modules_disabled 2>&1'
 	echo "== full kernel config"; R 'zcat /proc/config.gz'
+	exit 0
+fi
+devlist() {
+	R 'for d in /sys/bus/usb/devices/*; do [ -f $d/idVendor ] || continue; echo "${d##*/} $(cat $d/idVendor):$(cat $d/idProduct) class=$(cat $d/bDeviceClass 2>/dev/null) $(cat $d/manufacturer 2>/dev/null) / $(cat $d/product 2>/dev/null)"; for i in $d/*:*; do [ -d $i ] && echo "   iface ${i##*/} class=$(cat $i/bInterfaceClass) driver=$(basename $(readlink $i/driver 2>/dev/null) 2>/dev/null)"; done; done' |
+	while read -r l; do v=$(echo "$l" | grep -o ' [0-9a-f]\{4\}:' | head -1 | tr -d ' :'); echo "$l${v:+  [$(vname $v)]}"; done
+	R 'ls /sys/class/net | tr "\n" " "; echo; ip -br addr 2>/dev/null | grep -vE "^(lo|rmnet|ip6tnl|sit|umts|p2p|swlan|dummy)"'
+}
+if [ "$mode" = force-source ]; then
+	[ "$secs" -gt 300 ] && secs=300
+	P=/sys/class/typec/port0/port_type
+	orig=$(R "cat $P" | grep -o '\[[a-z]*\]' | tr -d '[]'); orig=${orig:-dual}
+	restore() { R "echo $orig > $P"; echo "$(date '+%T') restored port_type to $orig -> $(R "cat $P")"; echo "$(date '+%T') after restore: $(state)"; }
+	trap 'restore; exit' EXIT INT TERM HUP
+	echo "$(date '+%T') before: $(state)   (original port_type=$orig)"
+	echo "$(date '+%T') writing source: $(R "echo source > $P && echo ok")  now: $(R "cat $P")"
+	prev=""; shown=""; end=$((SECONDS + secs))
+	while [ $SECONDS -lt $end ]; do
+		cur=$(state); [ "$cur" != "$prev" ] && { echo "$(date '+%T') $cur"; prev=$cur; }
+		case "$cur" in *"usb=[]"*) ;; *) [ -z "$shown" ] && { sleep 4; echo "== devices appeared:"; devlist; shown=1; };; esac
+		sleep 2
+	done
+	echo "== end of window: devices / interfaces"; devlist
+	echo "== kernel log from the window"
+	R "dmesg | grep -vE 'sec-battery|dhd|SSP|audit|CFG80211|BAR0|FG\]|afc_temp|muic_print' | grep -iE 'usb|otg|xhci|dwc|ccic|pdic|muic|typec|vbus|ax88|asix|r815|cdc|ncm|eth[0-9]|hub' | tail -50"
 	exit 0
 fi
 if [ "$mode" = watch ]; then
