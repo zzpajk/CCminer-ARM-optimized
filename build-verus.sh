@@ -117,6 +117,6 @@ if [ ! -x "$B/ccminer" ] || ! grep -q 'baseline+x2percore+pristine' "$B/ccminer"
 fi
 cp "$B/ccminer" "$SRC/ccminer-verus"
 echo "[5/5] Done: $SRC/ccminer-verus"
-echo "Quick check (about 20 s):  ./ccminer-verus -a verus --benchmark -t $(nproc 2>/dev/null || echo 8) --time-limit 20"
+echo "Quick check (about 20 s):  ./ccminer-verus -a verus --benchmark -t $(grep -c ^processor /proc/cpuinfo 2>/dev/null || echo 8) --time-limit 20"
 echo "Mine with your own pool and wallet, e.g.:"
-echo "  ./ccminer-verus -a verus -o stratum+tcp://YOUR_POOL:PORT -u YOUR_WALLET.WORKER -p x -t $(nproc 2>/dev/null || echo 8)"
+echo "  ./ccminer-verus -a verus -o stratum+tcp://YOUR_POOL:PORT -u YOUR_WALLET.WORKER -p x -t $(grep -c ^processor /proc/cpuinfo 2>/dev/null || echo 8)"

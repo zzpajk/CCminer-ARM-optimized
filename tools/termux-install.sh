@@ -60,7 +60,7 @@ echo "[4/4] Building (several minutes)..."
 if bash "$DIR/build-verus.sh"; then
 	echo
 	echo "Binary: $DIR/ccminer-verus  (built from $(git -C "$DIR" rev-parse --short HEAD))"
-	echo "Benchmark: $DIR/ccminer-verus -a verus --benchmark -t $(nproc) --time-limit 20"
+	echo "Benchmark: $DIR/ccminer-verus -a verus --benchmark -t $(grep -c ^processor /proc/cpuinfo) --time-limit 20"
 	echo "Tip: with root, su -c 'echo 0-7 > /dev/cpuset/foreground/cpus' lets Termux use all 8 CPUs in the background."
 else
 	[ -x "$DIR/ccminer-verus.old" ] && echo "Build failed; the previous binary is still at $DIR/ccminer-verus.old"
