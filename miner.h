@@ -415,6 +415,7 @@ extern bool opt_tracegpu;
 extern int opt_n_threads;
 extern int active_gpus;
 extern int gpu_threads;
+const char *cpu_display_name(void);
 extern int opt_timeout;
 extern bool want_longpoll;
 extern bool have_longpoll;

@@ -157,6 +157,43 @@ void applog(int prio, const char *fmt, ...)
 
 extern int gpu_threads;
 // Use different prefix if multiple cpu threads per gpu
+#ifdef __ANDROID__
+#include <sys/system_properties.h>
+#endif
+/* Name of the CPU/SoC for the hashrate log lines (cached): Android phone model + SoC when available,
+ * else "Hardware" / "model name" from /proc/cpuinfo, else "ARM CPU". */
+const char *cpu_display_name(void)
+{
+	static char name[200] = "";
+	if (name[0]) return name;
+	char soc[96] = "", model[96] = "";
+#ifdef __ANDROID__
+	char v[PROP_VALUE_MAX];
+	if (__system_property_get("ro.soc.model", v) > 0) snprintf(soc, sizeof(soc), "%s", v);
+	else if (__system_property_get("ro.hardware.chipname", v) > 0) snprintf(soc, sizeof(soc), "%s", v);
+	else if (__system_property_get("ro.board.platform", v) > 0) snprintf(soc, sizeof(soc), "%s", v);
+	if (__system_property_get("ro.product.model", v) > 0) snprintf(model, sizeof(model), "%s", v);
+#endif
+	if (!soc[0]) {
+		FILE *f = fopen("/proc/cpuinfo", "r");
+		char line[256];
+		while (f && fgets(line, sizeof(line), f)) {
+			char *c = strchr(line, ':');
+			if (c && (!strncmp(line, "Hardware", 8) || !strncmp(line, "model name", 10))) {
+				c++; while (*c == ' ') c++;
+				c[strcspn(c, "\r\n")] = 0;
+				snprintf(soc, sizeof(soc), "%s", c);
+				break;
+			}
+		}
+		if (f) fclose(f);
+	}
+	if (model[0] && soc[0]) snprintf(name, sizeof(name), "%s (%s)", model, soc);
+	else if (model[0] || soc[0]) snprintf(name, sizeof(name), "%s", model[0] ? model : soc);
+	else snprintf(name, sizeof(name), "ARM CPU");
+	return name;
+}
+
 // Also, auto hide LOG_DEBUG if --debug (-D) is not used
 void gpulog(int prio, int thr_id, const char *fmt, ...)
 {
