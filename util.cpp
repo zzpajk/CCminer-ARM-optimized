@@ -168,10 +168,9 @@ void gpulog(int prio, int thr_id, const char *fmt, ...)
 	if (prio == LOG_DEBUG && !opt_debug)
 		return;
 
-	if (gpu_threads > 1)
-		len = snprintf(pfmt, 128, "CPU T%d: Verus Hashing. %s", thr_id, fmt);
-	else
-		len = snprintf(pfmt, 128, "GPU #%d: %s", dev_id, fmt);
+	// CPU miner: always label lines "CPU T<n>" (the "GPU #" form only appeared with a single thread)
+	len = snprintf(pfmt, 128, "CPU T%d: Verus Hashing. %s", thr_id, fmt);
+	(void) dev_id;
 	pfmt[sizeof(pfmt)-1]='\0';
 
 	va_start(ap, fmt);
