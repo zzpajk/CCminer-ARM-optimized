@@ -14,14 +14,15 @@
 #   bash phone-runner.sh start|stop|status|log
 #
 # Jobs repo layout (written by Claude):    jobs/NAME/<id>.job
-#   script=bench | sweep | info | led | cpuset | cpuwatch | usb | runner-update   (led: arg=cyan|magenta|...|off; cpuset: arg=show|widen|restore;
-#          cpuwatch: arg=MINUTES + arg=widen|nowiden; usb: arg=snapshot  or  arg=watch + arg=SECONDS, read-only USB/Type-C diagnostics)
+#   script=bench | sweep | info | led | cpuset | cpuwatch | usb | termux-install | runner-update   (led: arg=cyan|magenta|...|off; cpuset: arg=show|widen|restore;
+#          cpuwatch: arg=MINUTES + arg=widen|nowiden; usb: arg=snapshot  or  arg=watch + arg=SECONDS, read-only USB/Type-C diagnostics;
+#          termux-install: optional arg=--no-upgrade, builds ~/ccminer-arm-optimized/ccminer-verus)
 #   commit=<fork commit, full 40-hex SHA> (not needed for info)
 #   arg=<one argument per line>          e.g.  arg=-v   then   arg=baseline x2auto x2percore
 #   timeout=<minutes>                    optional, default 240
 # Results (written by the phone):         results/NAME/<id>/{status,console.log,report.txt}, results/NAME/heartbeat.txt
 set -u
-RUNNER_VERSION=1.6.5
+RUNNER_VERSION=1.6.6
 JOBS_REPO="${VERUS_JOBS_REPO:-git@github.com:zzpajk/verus-phone-jobs.git}"
 FORK="${VERUS_FORK:-https://github.com/zzpajk/CCminer-ARM-optimized.git}"
 CONF="$HOME/.verus-runner.conf"
@@ -114,7 +115,7 @@ run_job() { # job-file
 	done < "$f"
 	set +f
 	case "$tmo" in ''|*[!0-9]*) tmo=240;; esac
-	case "$script" in bench|sweep|led|cpuset|cpuwatch|usb|runner-update) case "$commit" in [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) ;; *)
+	case "$script" in bench|sweep|led|cpuset|cpuwatch|usb|termux-install|runner-update) case "$commit" in [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) ;; *)
 		echo "failed $(date '+%F %T') bad commit: $commit" > "$R/status"; push_results "job $id rejected"; return;; esac;;
 	info) ;; *) echo "failed $(date '+%F %T') unknown script: $script" > "$R/status"; push_results "job $id rejected"; return;; esac
 	case "$commit" in *[!0-9a-f]*) echo "failed $(date '+%F %T') bad commit: $commit" > "$R/status"; push_results "job $id rejected"; return;; esac
@@ -147,6 +148,9 @@ run_job() { # job-file
 	cpuset)
 		path=$(fetch_script "$commit" phone-cpuset.sh) && timeout 60 bash "$path" "${args[@]}" > "$R/console.log" 2>&1; rc=$?
 		[ -n "$path" ] || { echo "could not fetch phone-cpuset.sh at $commit" > "$R/console.log"; rc=1; };;
+	termux-install)
+		path=$(fetch_script "$commit" termux-install.sh) && timeout $((tmo * 60)) bash "$path" "${args[@]}" > "$RUNS/termux-install-$id.log" 2>&1 </dev/null; rc=$?
+		[ -n "$path" ] && cp "$RUNS/termux-install-$id.log" "$R/console.log" || { echo "could not fetch termux-install.sh at $commit" > "$R/console.log"; rc=1; };;
 	usb)
 		path=$(fetch_script "$commit" phone-usb.sh) && timeout 700 bash "$path" "${args[@]}" > "$R/console.log" 2>&1; rc=$?
 		[ -n "$path" ] || { echo "could not fetch phone-usb.sh at $commit" > "$R/console.log"; rc=1; };;
