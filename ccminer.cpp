@@ -102,6 +102,14 @@ bool allow_mininginfo = true;
 bool check_dups = false; //false;
 bool check_stratum_jobs = false;
 bool opt_submit_stale = false;
+bool opt_submit_low = false;            /* --submit-low: also send shares whose full hash is above the target */
+int opt_summary_interval = 300;         /* --summary-interval: seconds between hashrate summaries, 0 = off */
+volatile unsigned long verus_not_sent = 0;   /* shares held back by the full-hash check */
+volatile unsigned long verus_mismatch = 0;   /* full-hash check disagreed with the fast hash */
+/* live per-thread progress for the summary: the miner thread writes only when a scan call starts (one cache
+ * line per thread, so no sharing between hashing threads); the hash counter itself stays on its own stack */
+struct live_rate { volatile unsigned long *hd; volatile double t0; char pad[64 - sizeof(void *) - sizeof(double)]; };
+static struct live_rate live_rates[MAX_GPUS] __attribute__((aligned(64)));
 bool submit_old = false;
 bool use_syslog = false;
 bool use_colors = true;
@@ -357,7 +365,11 @@ Options:\n\
       --max-rate=N[KMG] Only mine if net hashrate is less than specified value\n\
       --max-diff=N      Only mine if net difficulty is less than specified value\n\
                         Can be tuned with --resume-diff=N to set a resume value\n\
-      --max-log-rate    Interval to reduce per gpu hashrate logs (default: 3)\n"
+      --max-log-rate    Interval to reduce per gpu hashrate logs (default: 3)\n\
+      --summary-interval=N  log a hashrate summary (total, per thread, shares) every N seconds\n\
+                        (default: 300, 0 = off)\n\
+      --submit-low      Verus: also submit shares whose full hash is above the pool target\n\
+                        (the pool rejects them; default: such shares are counted and not sent)\n"
 #if defined(__linux) /* via nvml */
 "\
       --mem-clock=3505  Set the gpu memory max clock (346.72+ driver)\n\
@@ -453,6 +465,8 @@ struct option options[] = {
 	{ "scantime", 1, NULL, 's' },
 	{ "show-diff", 0, NULL, 1013 }, // deprecated
 	{ "submit-stale", 0, NULL, 1015 },
+	{ "submit-low", 0, NULL, 1016 },
+	{ "summary-interval", 1, NULL, 1017 },
 	{ "hide-diff", 0, NULL, 1014 },
 	{ "statsavg", 1, NULL, 'N' },
 	{ "gpu-clock", 1, NULL, 1070 },
@@ -1816,6 +1830,48 @@ static bool wanna_mine(int thr_id)
 	return state;
 }
 
+/* Periodic hashrate summary (--summary-interval). Verus scan calls only return on a share or a new job, so the
+ * per-thread hashrate lines can be minutes apart; this reads each thread's running hash counter instead
+ * (one read per thread every N seconds: no measurable cost). */
+static void *summary_thread(void *userdata)
+{
+	(void) userdata;
+	while (!abort_flag) {
+		for (int s = 0; s < opt_summary_interval && !abort_flag; s++)
+			sleep(1);
+		if (abort_flag)
+			break;
+		struct timeval tv;
+		gettimeofday(&tv, NULL);
+		const double now = tv.tv_sec + tv.tv_usec * 1e-6;
+		char per[1024] = "";
+		size_t n = 0;
+		double total = 0.;
+		for (int i = 0; i < opt_n_threads && i < MAX_GPUS; i++) {
+			double r = thr_hashrates[i];
+			volatile unsigned long *hd = live_rates[i].hd;
+			const double dt = now - live_rates[i].t0;
+			if (hd && dt >= 2.0) {
+				const double live = (double) *hd / dt;
+				if (live > 0.) r = live;
+			}
+			total += r;
+			if (n < sizeof(per) - 32)
+				n += snprintf(per + n, sizeof(per) - n, "%sT%d %.0f", i ? " " : "", i, r / 1000.);
+		}
+		char tot[32];
+		format_hashrate(total, tot);
+		struct pool_infos *p = &pools[cur_pooln];
+		if (opt_benchmark)
+			applog(LOG_NOTICE, "Summary: %s | kH/s %s", tot, per);
+		else
+			applog(LOG_NOTICE, "Summary: %s | kH/s %s | accepted %u/%u, not sent %lu%s", tot, per,
+				p->accepted_count, p->accepted_count + p->rejected_count, verus_not_sent,
+				verus_mismatch ? " | HASH CHECK MISMATCHES" : "");
+	}
+	return NULL;
+}
+
 static void *miner_thread(void *userdata)
 {
 	struct thr_info *mythr = (struct thr_info *)userdata;
@@ -2328,6 +2384,8 @@ static void *miner_thread(void *userdata)
 
 		hashes_done = 0;
 		gettimeofday(&tv_start, NULL);
+		live_rates[thr_id].t0 = tv_start.tv_sec + tv_start.tv_usec * 1e-6;
+		live_rates[thr_id].hd = &hashes_done;
 
 		// check (and reset) previous errors
 	//	cudaError_t err = cudaGetLastError();
@@ -3374,6 +3432,15 @@ void parse_arg(int key, char *arg)
 	case 1015:
 		opt_submit_stale = true;
 		break;
+	case 1016:
+		opt_submit_low = true;
+		break;
+	case 1017:
+		v = atoi(arg);
+		if (v < 0 || v > 86400)
+			show_usage_and_exit(1);
+		opt_summary_interval = v;
+		break;
 	case 'S':
 	case 1018:
 		applog(LOG_INFO, "Now logging to syslog...");
@@ -3993,6 +4060,14 @@ int main(int argc, char *argv[])
 			applog(LOG_ERR, "thread %d create failed", i);
 			return EXIT_CODE_SW_INIT_ERROR;
 		}
+	}
+
+	if (opt_summary_interval > 0) {
+		pthread_t sum_pth;
+		if (pthread_create(&sum_pth, NULL, summary_thread, NULL) == 0)
+			pthread_detach(sum_pth);
+		else
+			applog(LOG_WARNING, "summary thread create failed");
 	}
 
 	applog(LOG_INFO, "%d miner thread%s started, "

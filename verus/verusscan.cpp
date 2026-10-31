@@ -248,8 +248,8 @@ static int verus_full_check(uint32_t *full, const uint8_t *blockhash_half, const
 	memcpy(buf + 47, &im, 8); memcpy(buf + 55, &im, 8); memcpy(buf + 63, &im, 1);
 	haraka512_port_keyed((unsigned char *)full, buf, kc + (im & 511));
 	if (full[7] != fast_top) {
-		static int warned = 0;
-		if (!warned) { warned = 1; applog(LOG_WARNING, "verus: full-hash check disagrees with the fast hash, submitting unchecked"); }
+		unsigned long n = __sync_add_and_fetch(&verus_mismatch, 1);
+		applog(LOG_WARNING, "verus: full-hash check disagrees with the fast hash (%lu so far), submitting unchecked", n);
 		return -1;
 	}
 	for (int i = 7; i >= 0; i--) {
@@ -428,11 +428,12 @@ static __attribute__((noinline)) void verus_scan_lanes(struct verus_scan_ctx *c)
 				((uint32_t *)(&nonceSpace[11]))[0] = nonce_buf + lane;
 				uint32_t full[8];
 				int ok = verus_full_check(full, c->blockhash_half, nonceSpace, c->data_key, work->target, vh[lane][7]);
-				if (ok == 0) {   /* top word passed, full hash above the target: the pool would reject it */
-					gpulog(LOG_DEBUG, c->thr_id, "share above the pool target, not submitted");
+				if (ok == 0 && !opt_submit_low) {   /* top word passed, full hash above the target: the pool would reject it */
+					gpulog(LOG_INFO, c->thr_id, "share above the pool target, not sent (%lu so far)",
+						__sync_add_and_fetch(&verus_not_sent, 1));
 					continue;
 				}
-				memcpy(c->vhash, ok > 0 ? full : vh[lane], 8 * sizeof(uint32_t));
+				memcpy(c->vhash, ok >= 0 ? full : vh[lane], 8 * sizeof(uint32_t));
 				work->valid_nonces++;
 				memcpy(work->data, c->full_data, 140);
 				int nonce = work->valid_nonces - 1;
@@ -639,11 +640,12 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 		{
 			uint32_t full[8];
 			int ok = verus_full_check(full, blockhash_half, nonceSpace, data_key, work->target, vhash[7]);
-			if (ok == 0) {   /* top word passed, full hash above the target: the pool would reject it */
-				gpulog(LOG_DEBUG, thr_id, "share above the pool target, not submitted");
+			if (ok == 0 && !opt_submit_low) {   /* top word passed, full hash above the target: the pool would reject it */
+				gpulog(LOG_INFO, thr_id, "share above the pool target, not sent (%lu so far)",
+					__sync_add_and_fetch(&verus_not_sent, 1));
 				goto next_nonce;
 			}
-			if (ok > 0) memcpy(vhash, full, sizeof(full));
+			if (ok >= 0) memcpy(vhash, full, sizeof(full));
 			work->valid_nonces++;
 			memcpy(work->data, full_data, 140);
 			int nonce = work->valid_nonces - 1;
