@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
-# phone-led.sh COLOR|off [steady|blink|find] - light the notification LED so a phone can be found physically.
+# phone-led.sh COLOR|off [steady|blink|find|quietfind] - light the notification LED so a phone can be found physically.
 # COLOR: cyan, magenta, red, green, blue, white, or a hex RGB like 00ffff. Tries the Samsung sec LED
 # interface (/sys/class/sec/led) and the generic /sys/class/leds/{red,green,blue,led_r,...}, first directly,
 # then through su (needs a rooted phone; inside a proot userland the direct writes normally fail).
 # MODE: steady (default), blink (500 ms on/off), find (blink + cycling colours + torch, vibration, max volume,
-# ringtone and spoken "here I am" via Termux:API for ~45 s; touches volume and the torch as well).
+# ringtone and spoken "here I am" via Termux:API for ~45 s; touches volume and the torch as well),
+# quietfind (the same without any sound: LED colours, torch and vibration only; volume untouched).
 # Prints what it found and what worked.
 set -u
 c="${1:-cyan}"
 mode="${2:-steady}"
+quiet=0; [ "$mode" = quietfind ] && { mode=find; quiet=1; }
 case "$c" in cyan) rgb=00ffff;; magenta) rgb=ff00ff;; red) rgb=ff0000;; green) rgb=00ff00;; blue) rgb=0000ff;;
 	white) rgb=ffffff;; off) rgb=000000;; [0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]) rgb=$c;;
 	*) echo "unknown colour $c"; exit 2;; esac
@@ -50,21 +52,22 @@ have() { command -v "$1" >/dev/null 2>&1; }
 for x in termux-torch termux-vibrate termux-tts-speak termux-media-player termux-volume; do have $x && echo "  have $x" || echo "  missing $x (install Termux:API app + pkg termux-api)"; done
 suc() { [ -n "$SU" ] && timeout 10 "$SU" -c "$1" </dev/null >/dev/null 2>&1; }
 suc "input keyevent KEYCODE_WAKEUP" && echo "  screen wake sent"
-for st in 3 4 5; do suc "media volume --stream $st --set 15" || suc "cmd media_session volume --stream $st --set 15"; done
-have termux-volume && { T termux-volume music 15; T termux-volume alarm 7; T termux-volume ring 7; }
+[ $quiet = 1 ] && echo "  quiet: no volume change, no sound"
+[ $quiet = 1 ] || for st in 3 4 5; do suc "media volume --stream $st --set 15" || suc "cmd media_session volume --stream $st --set 15"; done
+[ $quiet = 0 ] && have termux-volume && { T termux-volume music 15; T termux-volume alarm 7; T termux-volume ring 7; }
 snd=$(ls /system/media/audio/ringtones/*.ogg /system/media/audio/alarms/*.ogg 2>/dev/null | head -1)
 echo "  sound file: ${snd:-none}"
-[ -n "$snd" ] && have termux-media-player && T termux-media-player play "$snd"
+[ $quiet = 0 ] && [ -n "$snd" ] && have termux-media-player && T termux-media-player play "$snd"
 end=$((SECONDS+45)); n=0
 while [ $SECONDS -lt $end ]; do
 	cols=(ff0000 00ff00 0000ff ffffff ff00ff 00ffff); col=${cols[$((n%6))]}
 	[ -d /sys/class/sec/led ] && w /sys/class/sec/led/led_blink "0x$col 300 300" >/dev/null
 	have termux-torch && T termux-torch on
 	have termux-vibrate && T termux-vibrate -d 700 -f
-	[ $((n%4)) = 0 ] && have termux-tts-speak && T termux-tts-speak -s ALARM "Here I am. Here I am."
+	[ $quiet = 0 ] && [ $((n%4)) = 0 ] && have termux-tts-speak && T termux-tts-speak -s ALARM "Here I am. Here I am."
 	sleep 1.2; have termux-torch && T termux-torch off; sleep 0.8; n=$((n+1))
 done
 have termux-torch && T termux-torch off
-have termux-media-player && T termux-media-player stop
+[ $quiet = 0 ] && have termux-media-player && T termux-media-player stop
 [ "$rgb" != 000000 ] && [ -d /sys/class/sec/led ] && w /sys/class/sec/led/led_blink "0x$rgb 500 500" >/dev/null
 echo "RESULT: find mode ran $n cycles"
