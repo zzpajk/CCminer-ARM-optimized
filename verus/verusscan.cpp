@@ -222,6 +222,43 @@ static inline void Verus2hash_pristine(unsigned char *hash, unsigned char *curBu
 #define posix_memalign(p, a, s) (((*(p)) = _aligned_malloc((s), (a))), *(p) ?0 :errno)
 #endif
 
+/* Full-hash check for share candidates.
+ * The fast Haraka512 (haraka512_keyed) stores only the top 32 bits of the hash: that is all the search loop
+ * compares with the target, and upstream submitted every nonce whose top word was <= the target's top word.
+ * The pool checks the whole 256-bit hash, so part of those shares were rejected ("low difficulty"), and the
+ * share difficulty in the log was computed from a hash whose other 224 bits were 0 (diff 0.000, or the same
+ * constant every time). For a candidate (about once per share, so it costs nothing measurable) this recomputes
+ * the full hash with the portable reference code from the restored key (the state at the start of every
+ * hash; nothing is modified). Returns 1 if the full hash meets the target, 0 if it does not (do not submit),
+ * -1 if the portable top word differs from the fast one (should never happen: the caller then submits as
+ * before). full[] receives the 8 hash words (little endian, word 7 most significant). */
+static int verus_full_check(uint32_t *full, const uint8_t *blockhash_half, const uint8_t *nonce15,
+		const __m128i *key, const uint32_t *target, uint32_t fast_top)
+{
+	static __thread __m128i *kc = NULL;
+	if (!kc && posix_memalign((void **)&kc, 64, (VERUS_KEY_SIZE128 + 8) * sizeof(__m128i))) { kc = NULL; return -1; }
+	alignas(64) __m128i gp[32], gpx[32];
+	uint16_t fr[32], fre[32];
+	alignas(16) unsigned char buf[64];
+	memcpy(kc, key, VERUS_KEY_SIZE128 * sizeof(__m128i));
+	memcpy(buf, blockhash_half, 64);
+	memcpy(buf + 47, buf, 16); memcpy(buf + 63, buf, 1);
+	memcpy(buf + 32, nonce15, 15);
+	uint64_t im = verusclhash_port2_2(kc, buf, 511, fr, fre, gp, gpx);
+	memcpy(buf + 47, &im, 8); memcpy(buf + 55, &im, 8); memcpy(buf + 63, &im, 1);
+	haraka512_port_keyed((unsigned char *)full, buf, kc + (im & 511));
+	if (full[7] != fast_top) {
+		static int warned = 0;
+		if (!warned) { warned = 1; applog(LOG_WARNING, "verus: full-hash check disagrees with the fast hash, submitting unchecked"); }
+		return -1;
+	}
+	for (int i = 7; i >= 0; i--) {
+		if (full[i] < target[i]) return 1;
+		if (full[i] > target[i]) return 0;
+	}
+	return 1;
+}
+
 
 #ifdef VERUS_X2
 /* How many nonces to hash in lockstep on the core this thread is running on.
@@ -389,7 +426,13 @@ static __attribute__((noinline)) void verus_scan_lanes(struct verus_scan_ctx *c)
 		for (int lane = 0; lane < NL; lane++) {
 			if (vh[lane][7] <= Htarg) {
 				((uint32_t *)(&nonceSpace[11]))[0] = nonce_buf + lane;
-				memcpy(c->vhash, vh[lane], 8 * sizeof(uint32_t));
+				uint32_t full[8];
+				int ok = verus_full_check(full, c->blockhash_half, nonceSpace, c->data_key, work->target, vh[lane][7]);
+				if (ok == 0) {   /* top word passed, full hash above the target: the pool would reject it */
+					gpulog(LOG_DEBUG, c->thr_id, "share above the pool target, not submitted");
+					continue;
+				}
+				memcpy(c->vhash, ok > 0 ? full : vh[lane], 8 * sizeof(uint32_t));
 				work->valid_nonces++;
 				memcpy(work->data, c->full_data, 140);
 				int nonce = work->valid_nonces - 1;
@@ -594,6 +637,13 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 
 		if (  vhash[7] <= Htarg )
 		{
+			uint32_t full[8];
+			int ok = verus_full_check(full, blockhash_half, nonceSpace, data_key, work->target, vhash[7]);
+			if (ok == 0) {   /* top word passed, full hash above the target: the pool would reject it */
+				gpulog(LOG_DEBUG, thr_id, "share above the pool target, not submitted");
+				goto next_nonce;
+			}
+			if (ok > 0) memcpy(vhash, full, sizeof(full));
 			work->valid_nonces++;
 			memcpy(work->data, full_data, 140);
 			int nonce = work->valid_nonces - 1;
@@ -607,6 +657,7 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 		}
 
 		//}
+next_nonce:
 		if ( __builtin_expect ( (uint64_t)throughput + (uint64_t)nonce_buf >= (uint64_t)max_nonce, 0) ) {
 
 			break;

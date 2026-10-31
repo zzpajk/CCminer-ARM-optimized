@@ -105,6 +105,10 @@ jobs:
             tests/verus_pristinetest.cpp clplain.o hk.o hkp.o -o pristinetestpre
           ./pristinetestpre 300000 | tee -a difftest.txt
           grep -q 'pristinetest preload.*PASS' difftest.txt
+          clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -I. -Iverus \
+            tests/verus_fullchecktest.cpp clplain.o hk.o hkp.o -o fullchecktest
+          ./fullchecktest 200000 | tee -a difftest.txt
+          grep -q 'fullchecktest.*PASS' difftest.txt
           for v in baseline pristine x2percore x2percorep; do echo "banner $v: $(./out/ccminer-$v --version 2>&1 | grep -o 'Verus variant: .*' | head -1)" | tee -a difftest.txt; done
           ! grep -q FAIL difftest.txt
           [ "$(grep -c 'x2test.*PASS' difftest.txt)" = 52 ]
