@@ -7,9 +7,14 @@
 # Changes are logged with timestamps; a status line every status-seconds (default 300) with the hashrate,
 # each CPU's current clock (MHz), the clock caps below the hardware maximum, and the CPU temperatures.
 # "widen" (default) first sets the foreground cpuset to all CPUs ONCE (root) and restores it at the end.
+# MODE may be "widen,cap1794" / "nowiden,cap1794": also cap the fast cores' clock (root; restored at the end).
 # Extra miner options (e.g. --cpu-priority 1) are passed through. Refuses to run while another ccminer runs.
 set -u
-MIN="${1:-120}"; MODE="${2:-widen}"; STS="${3:-300}"; shift $(( $# < 3 ? $# : 3 ))
+MIN="${1:-120}"; MODE="${2:-widen}"; CAPMHZ=""
+# MODE may carry ",capNNNN": cap the fast cores (all CPUs above the slowest cluster) at NNNN MHz (root)
+case "$MODE" in *,cap*) CAPMHZ="${MODE##*,cap}"; MODE="${MODE%%,*}";; esac
+case "$CAPMHZ" in *[!0-9]*) echo "bad cap value $CAPMHZ"; exit 2;; esac
+ STS="${3:-300}"; shift $(( $# < 3 ? $# : 3 ))
 case "$STS" in ''|*[!0-9]*|0) STS=300;; esac
 case "$MIN" in ''|*[!0-9]*) echo "minutes must be a number"; exit 2;; esac
 F=/dev/cpuset/foreground/cpus
@@ -41,14 +46,31 @@ if [ "$MODE" = widen ]; then
 	[ -n "$SU" ] || { echo "widen needs root (Android su)"; exit 1; }
 	timeout 15 "$SU" -c "echo $ALL > $F" </dev/null && echo "$(ts) foreground cpuset set ONCE to $(cat $F) (no repeat loop)"
 fi
+CAPPED=""
+if [ -n "$CAPMHZ" ]; then
+	[ -n "$SU" ] || { echo "cap needs root (Android su)"; exit 1; }
+	lo=$(cat $C/cpu[0-9]*/cpufreq/cpuinfo_max_freq 2>/dev/null | sort -n | head -1)
+	for c in $C/cpu[0-9]*; do
+		mx=$(cat $c/cpufreq/cpuinfo_max_freq 2>/dev/null); [ -n "$mx" ] && [ "$mx" -gt "$lo" ] || continue
+		# largest available frequency <= the cap
+		f=$(tr ' ' '\n' < $c/cpufreq/scaling_available_frequencies 2>/dev/null | awk -v t=$((CAPMHZ*1000)) '$1 <= t && $1 > b {b = $1} END {print b+0}')
+		[ "$f" -gt 0 ] || f=$((CAPMHZ*1000))
+		timeout 15 "$SU" -c "echo $f > $c/cpufreq/scaling_max_freq" </dev/null && CAPPED="$CAPPED ${c##*/}"
+		CAPF=$f
+	done
+	echo "$(ts) fast cores capped at $((CAPF/1000)) MHz:$CAPPED (read back: $(for c in $CAPPED; do printf '%s ' $(( $(cat $C/$c/cpufreq/scaling_max_freq) / 1000 )); done))"
+fi
 LOG="$HOME/verus-runs/cpuwatch-miner.log"
 "$BIN" -a verus --benchmark -t "$NCPU" --no-color "$@" > "$LOG" 2>&1 < /dev/null &
 MP=$!
 cleanup() { kill "$MP" 2>/dev/null; wait "$MP" 2>/dev/null
-	if [ "$MODE" = widen ] && [ -n "$ORIG" ]; then timeout 15 "$SU" -c "echo $ORIG > $F" </dev/null && echo "$(ts) foreground cpuset restored to $ORIG"; fi; }
+	if [ "$MODE" = widen ] && [ -n "$ORIG" ]; then timeout 15 "$SU" -c "echo $ORIG > $F" </dev/null && echo "$(ts) foreground cpuset restored to $ORIG"; fi
+	for c in $CAPPED; do timeout 15 "$SU" -c "cat $C/$c/cpufreq/cpuinfo_max_freq > $C/$c/cpufreq/scaling_max_freq" </dev/null; done
+	[ -n "$CAPPED" ] && echo "$(ts) clock cap removed:$CAPPED (now $(for c in $CAPPED; do printf '%s ' $(( $(cat $C/$c/cpufreq/scaling_max_freq) / 1000 )); done)MHz)"; }
 trap cleanup EXIT
 sleep 5
 echo "$(ts) miner pid $MP, $NCPU threads; sampling every 10 s for $MIN min, status every $STS s"
+t_start=$(date +%s); sum=0; cnt=0
 end=$(( $(date +%s) + MIN * 60 )); last=""; changes=0; narrow=0; samples=0; nextst=$(( $(date +%s) + STS ))
 while [ "$(date +%s)" -lt "$end" ] && kill -0 "$MP" 2>/dev/null; do
 	fg=$(cat "$F" 2>/dev/null); al=$(grep -m1 Cpus_allowed_list /proc/$MP/status 2>/dev/null | awk '{print $2}')
@@ -65,10 +87,13 @@ while [ "$(date +%s)" -lt "$end" ] && kill -0 "$MP" 2>/dev/null; do
 	fi
 	if [ "$(date +%s)" -ge "$nextst" ]; then
 		hr=$(grep -oE 'Total: [0-9.]+ [kMG]?H/s' "$LOG" 2>/dev/null | tail -1)
+		if [ $(( $(date +%s) - t_start )) -ge 300 ] && [ -n "$hr" ]; then
+			sum=$(awk -v a="$sum" -v b="$(echo "$hr" | awk '{print $2}')" 'BEGIN {print a + b}'); cnt=$((cnt + 1)); fi
 		echo "$(ts) status: ${hr:-no total yet} | MHz $(freqs) | caps $(caps | sed 's/^$/none/') | $(temps) | $cur | threads on $on"
 		nextst=$(( $(date +%s) + STS ))
 	fi
 	sleep 10
 done
 echo "$(ts) done: $samples samples, $changes changes, miner had fewer than all CPUs in $narrow samples ($(( narrow * 100 / (samples ? samples : 1) ))%)"
+echo "$(ts) average hashrate after the first 5 min: $(awk -v s="$sum" -v k="$cnt" 'BEGIN {if (k > 0) printf "%.1f kH/s over %d status lines", s / k, k; else print "n/a"}')"
 echo "$(ts) miner hashrate lines (first/last):"; grep -E 'Total:' "$LOG" | sed -n '1p;$p'
