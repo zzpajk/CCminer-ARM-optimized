@@ -792,17 +792,29 @@ FORCE_INLINE __m128i verus_light_f(const __m128i v, const __m128i p, const uint6
 }
 
 /* FIXC >= 0: the case is known at compile time (fused dispatch, SEL bit 3), so the switch folds away. */
+/* fold index of a selector: case | rounds << 3 (two instructions on AArch64) */
+FORCE_INLINE uint64_t verus_fold_index(uint64_t selector)
+{
+#if defined(__aarch64__)
+	uint64_t x;
+	__asm__("lsr %0, %1, #58\n\tbfxil %0, %1, #2, #3" : "=&r"(x) : "r"(selector));
+	return x;
+#else
+	return ((selector >> 58) & ~(uint64_t)7) | ((selector >> 2) & 7);
+#endif
+}
 typedef uint64_t __attribute__((may_alias)) verus_u64_alias;
 template<int SEL, int FIXC = -1>
 FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *randomsource,
 		const __m128i *pbuf_copy, uint64_t keyMask, uint16_t * __restrict fixrand,
-		uint16_t * __restrict fixrandex, __m128i *g_prand, __m128i *g_prandex)
+		uint16_t * __restrict fixrandex, __m128i *g_prand, __m128i *g_prandex, uint64_t presel = 0)
 {
 	__m128i const *pbuf, *pbsf;
 
 		//std::cout << "LOOP " << i << " acc: " << LEToHex(acc) << std::endl;
 
-		const uint64_t selector = _mm_cvtsi128_si64_emu(acc);
+		/* threaded dispatch (4096): the caller already moved the selector to a general register for its jump */
+		const uint64_t selector = (SEL & 4096) ? presel : (uint64_t)_mm_cvtsi128_si64_emu(acc);
 #ifdef VERUS_STATS
 		verus_dbg_sel[(verus_dbg_n++) & 1][i] = selector;
 #endif
@@ -858,7 +870,8 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 		 * device: round r is followed by r-1 .. 0). The jump mispredicts 7 times in 8 anyway; the separate,
 		 * equally unpredictable loop exit is gone, and inside a round the selector bit and the buffer word
 		 * are constants. Round r of R reads the key word prand[R - r], as the original rc++ does. */
-#define VERUS_FOLD ((SEL & 1024) && FIXC < 0)
+/* with bit 4096 (threaded dispatch in verusclhash_port2_2_xN) FIXC >= 0 is a fold index: case | rounds << 3 */
+#define VERUS_FOLD ((SEL & 1024) && (FIXC < 0 || (SEL & 4096)))
 #define VERUS_CASE(c) (VERUS_FOLD ? (uint64_t)((c) >> 2) : (uint64_t)(c))
 #define VERUS_CASEX(c, r) (VERUS_FOLD ? (uint64_t)(((c) >> 2) | ((r) << 3)) : (uint64_t)(0x1000 + (c) * 8 + (r)))   /* dead labels when not folding */
 #define VERUS_CASEL(c) (VERUS_FOLD ? (uint64_t)(0x2000 + (c)) : (uint64_t)(c))                                 /* dead label when folding */
@@ -874,7 +887,7 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 		/* index = case | rounds << 3, as lsr #58 + bfxil (two instructions in front of the table load) */
 		uint64_t fidx = ((selector >> 58) & ~(uint64_t)7) | ((selector >> 2) & 7);
 #if defined(__aarch64__)
-		if (VERUS_FOLD && (SEL & 2048)) {
+		if (VERUS_FOLD && (SEL & 2048) && FIXC < 0) {
 			__asm__("lsr %0, %1, #58\n\tbfxil %0, %1, #2, #3" : "=&r"(fidx) : "r"(selector));
 			if (fidx > 63) __builtin_unreachable();
 		}
@@ -1376,7 +1389,7 @@ if (SEL & 2) {
 		default:
 			/* lean + fold: the index comes from inline asm, so tell the compiler that every value has a
 			 * label (no range check in front of the table jump) */
-			if (VERUS_FOLD && (SEL & 2048)) __builtin_unreachable();
+			if (VERUS_FOLD && (SEL & 2048) && FIXC < 0) __builtin_unreachable();
 			goto verus_case_1c;
 		}
 
@@ -1414,6 +1427,59 @@ void verusclhash_port2_2_xN(void **random, const unsigned char **buf, uint64_t k
 		pc[l][0] = _mm_xor_si128(a[0], a[2]); pc[l][1] = _mm_xor_si128(a[1], a[3]); pc[l][2] = a[2]; pc[l][3] = a[3];
 		acc[l] = _mm_load_si128_emu(rs[l] + (keyMask + 2));
 	}
+#if defined(__GNUC__)
+	if ((N == 1 || N == 2) && (SEL & 4096)) {
+		/* SEL bit 12 (4096), "threaded": needs fold (1024). Every case body ends with its own copy of the
+		 * next lane's case jump (computed goto through a table of label addresses: ldr + br, no adr/add,
+		 * no shared jump block to branch back to). Bodies are specialised per fold index; in front of the
+		 * jump there is only the index (fmov, lsr, bfxil), the rest of the round set-up runs after it. */
+#define VERUS_TH_NEXT(tab, l) { selv = (uint64_t)_mm_cvtsi128_si64_emu(acc[l]); goto *tab[verus_fold_index(selv)]; }
+#define VERUS_TH_BODY(P, l, t, AFTER) P##t: verus_round_port2_2<SEL, t>(acc[l], i, rs[l], pcb[l], keyMask, fr[l], fre[l], gp[l], gpx[l], selv); AFTER
+#define VERUS_TH_LANE(P, l, AFTER) \
+		VERUS_TH_BODY(P, l, 0, AFTER) VERUS_TH_BODY(P, l, 1, AFTER) VERUS_TH_BODY(P, l, 2, AFTER) VERUS_TH_BODY(P, l, 3, AFTER) \
+		VERUS_TH_BODY(P, l, 4, AFTER) VERUS_TH_BODY(P, l, 7, AFTER) \
+		VERUS_TH_BODY(P, l, 5, AFTER) VERUS_TH_BODY(P, l, 13, AFTER) VERUS_TH_BODY(P, l, 21, AFTER) VERUS_TH_BODY(P, l, 29, AFTER) \
+		VERUS_TH_BODY(P, l, 37, AFTER) VERUS_TH_BODY(P, l, 45, AFTER) VERUS_TH_BODY(P, l, 53, AFTER) VERUS_TH_BODY(P, l, 61, AFTER) \
+		VERUS_TH_BODY(P, l, 6, AFTER) VERUS_TH_BODY(P, l, 14, AFTER) VERUS_TH_BODY(P, l, 22, AFTER) VERUS_TH_BODY(P, l, 30, AFTER) \
+		VERUS_TH_BODY(P, l, 38, AFTER) VERUS_TH_BODY(P, l, 46, AFTER) VERUS_TH_BODY(P, l, 54, AFTER) VERUS_TH_BODY(P, l, 62, AFTER)
+		static const void *const tab_a[64] = {
+			&&verus_ta_0, &&verus_ta_1, &&verus_ta_2, &&verus_ta_3, &&verus_ta_4, &&verus_ta_5,  &&verus_ta_6,  &&verus_ta_7,
+			&&verus_ta_0, &&verus_ta_1, &&verus_ta_2, &&verus_ta_3, &&verus_ta_4, &&verus_ta_13, &&verus_ta_14, &&verus_ta_7,
+			&&verus_ta_0, &&verus_ta_1, &&verus_ta_2, &&verus_ta_3, &&verus_ta_4, &&verus_ta_21, &&verus_ta_22, &&verus_ta_7,
+			&&verus_ta_0, &&verus_ta_1, &&verus_ta_2, &&verus_ta_3, &&verus_ta_4, &&verus_ta_29, &&verus_ta_30, &&verus_ta_7,
+			&&verus_ta_0, &&verus_ta_1, &&verus_ta_2, &&verus_ta_3, &&verus_ta_4, &&verus_ta_37, &&verus_ta_38, &&verus_ta_7,
+			&&verus_ta_0, &&verus_ta_1, &&verus_ta_2, &&verus_ta_3, &&verus_ta_4, &&verus_ta_45, &&verus_ta_46, &&verus_ta_7,
+			&&verus_ta_0, &&verus_ta_1, &&verus_ta_2, &&verus_ta_3, &&verus_ta_4, &&verus_ta_53, &&verus_ta_54, &&verus_ta_7,
+			&&verus_ta_0, &&verus_ta_1, &&verus_ta_2, &&verus_ta_3, &&verus_ta_4, &&verus_ta_61, &&verus_ta_62, &&verus_ta_7 };
+		static const void *const tab_b[64] = {
+			&&verus_tb_0, &&verus_tb_1, &&verus_tb_2, &&verus_tb_3, &&verus_tb_4, &&verus_tb_5,  &&verus_tb_6,  &&verus_tb_7,
+			&&verus_tb_0, &&verus_tb_1, &&verus_tb_2, &&verus_tb_3, &&verus_tb_4, &&verus_tb_13, &&verus_tb_14, &&verus_tb_7,
+			&&verus_tb_0, &&verus_tb_1, &&verus_tb_2, &&verus_tb_3, &&verus_tb_4, &&verus_tb_21, &&verus_tb_22, &&verus_tb_7,
+			&&verus_tb_0, &&verus_tb_1, &&verus_tb_2, &&verus_tb_3, &&verus_tb_4, &&verus_tb_29, &&verus_tb_30, &&verus_tb_7,
+			&&verus_tb_0, &&verus_tb_1, &&verus_tb_2, &&verus_tb_3, &&verus_tb_4, &&verus_tb_37, &&verus_tb_38, &&verus_tb_7,
+			&&verus_tb_0, &&verus_tb_1, &&verus_tb_2, &&verus_tb_3, &&verus_tb_4, &&verus_tb_45, &&verus_tb_46, &&verus_tb_7,
+			&&verus_tb_0, &&verus_tb_1, &&verus_tb_2, &&verus_tb_3, &&verus_tb_4, &&verus_tb_53, &&verus_tb_54, &&verus_tb_7,
+			&&verus_tb_0, &&verus_tb_1, &&verus_tb_2, &&verus_tb_3, &&verus_tb_4, &&verus_tb_61, &&verus_tb_62, &&verus_tb_7 };
+		uint64_t i = 0, selv;
+		/* the four buffer words of each lane live on the stack; keep their address in a register (sp cannot
+		 * be the base of a scaled-index load, the compiler would copy it in every round) */
+		const __m128i *pcb[N];
+#pragma clang loop unroll(full)
+		for (int l = 0; l < N; l++) { pcb[l] = pc[l]; __asm__("" : "+r"(pcb[l])); }
+		VERUS_TH_NEXT(tab_a, 0)
+		/* after a lane-0 body: with two lanes the other lane's jump, with one lane the next round */
+#define VERUS_TH_AFTER_A { if (N == 2) VERUS_TH_NEXT(tab_b, N - 1) if (++i == 32) goto verus_th_done; VERUS_TH_NEXT(tab_a, 0) }
+#define VERUS_TH_AFTER_B { if (++i == 32) goto verus_th_done; VERUS_TH_NEXT(tab_a, 0) }
+		VERUS_TH_LANE(verus_ta_, 0, VERUS_TH_AFTER_A)
+		VERUS_TH_LANE(verus_tb_, N - 1, VERUS_TH_AFTER_B)
+	verus_th_done: ;
+#undef VERUS_TH_NEXT
+#undef VERUS_TH_BODY
+#undef VERUS_TH_LANE
+#undef VERUS_TH_AFTER_A
+#undef VERUS_TH_AFTER_B
+	} else
+#endif
 #if defined(__aarch64__)
 	if ((N == 1 || N == 2) && (SEL & 64)) {
 		/* SEL bit 6 (64): branch-table dispatch. A jump table needs a load of the table entry before the
@@ -1503,6 +1569,8 @@ template void verusclhash_port2_2_xN<2, 1155>(void **, const unsigned char **, u
 template void verusclhash_port2_2_xN<2, 1187>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<2, 3200>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<2, 2176>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 7296>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 5248>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<2, 512>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<2, 515>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<2, 547>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
@@ -1522,6 +1590,8 @@ template void verusclhash_port2_2_xN<1, 1152>(void **, const unsigned char **, u
 template void verusclhash_port2_2_xN<1, 1155>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<1, 3200>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<1, 2176>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<1, 7296>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<1, 5248>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<1, 640>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<1, 672>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<3, 0>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);

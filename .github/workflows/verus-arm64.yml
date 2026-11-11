@@ -85,13 +85,13 @@ jobs:
             tests/verus_x2test.cpp clf64.o hk.o hkp.o -o x2testf64
           ./x2testf64 300000 | sed 's/x2test/x2test fuse64+sel2/' | tee -a difftest.txt
           # SEL bit 16 (light merge of cases 0/4/8/0x1c) and bit 32 (branch-free case 0x0c), alone and on top of sel2
-          for f in 16 32 48 19 35 51 64 67 99 39 128 131 163 227 256 259 291 355 384 387 419 483 512 515 547 640 643 675 768 771 803 896 899 931 1152 1155 1187 1408 1411 1443 2176 3200 2432 3456; do
+          for f in 16 32 48 19 35 51 64 67 99 39 128 131 163 227 256 259 291 355 384 387 419 483 512 515 547 640 643 675 768 771 803 896 899 931 1152 1155 1187 1408 1411 1443 2176 3200 2432 3456 5248 7296 5504 7552; do
             clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_SEL_FORCE=$f -I. -Iverus \
               tests/verus_x2test.cpp clx2.o hk.o hkp.o -o x2testsel$f
             ./x2testsel$f 300000 | sed "s/x2test/x2test SEL $f/" | tee -a difftest.txt
           done
           # one lane through the same round code (single-nonce cores, VERUS_SEL1)
-          for f in 128 129 130 131 160 163 192 224 640 672 1152 1155 2176 3200; do
+          for f in 128 129 130 131 160 163 192 224 640 672 1152 1155 2176 3200 5248 7296; do
             clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_LANES=1 -DVERUS_SEL_FORCE=$f -I. -Iverus \
               tests/verus_x2test.cpp clx2.o hk.o hkp.o -o x2test1sel$f
             ./x2test1sel$f 200000 | sed "s/x2test/x2test 1-lane SEL $f/" | tee -a difftest.txt
@@ -111,7 +111,7 @@ jobs:
           grep -q 'fullchecktest.*PASS' difftest.txt
           for v in baseline pristine x2percore x2percorep; do echo "banner $v: $(./out/ccminer-$v --version 2>&1 | grep -o 'Verus variant: .*' | head -1)" | tee -a difftest.txt; done
           ! grep -q FAIL difftest.txt
-          [ "$(grep -c 'x2test.*PASS' difftest.txt)" = 66 ]
+          [ "$(grep -c 'x2test.*PASS' difftest.txt)" = 72 ]
           grep -q 'pristinetest.*PASS' difftest.txt
       - name: One-step build script (build-verus.sh, system clang)
         run: |

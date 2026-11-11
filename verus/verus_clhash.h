@@ -64,6 +64,8 @@ static inline void verus_fixkey_pristine_sel(const uint16_t * __restrict sj16, _
  * unrolled rounds at the right place (instantiated: 1152 1155 1187; scan values 1408 1411 1443).
  * bit 11 (2048): lean, selector journal (fixrand must hold 256 bytes) + shorter code in front of the case jump
  * (instantiated: 2176 3200; scan values 2432 3456; needs bit 128).
+ * bit 12 (4096): threaded dispatch, every case body ends with its own jump to the next case (computed goto,
+ * bodies specialised per fold index; needs bit 1024; instantiated: 5248 7296; scan values 5504 7552).
  * The default comes from the build flags; x2percore picks it per core at run time. */
 #if defined(VERUS_SEL_FORCE)
 #  define VERUS_SEL_DEFAULT VERUS_SEL_FORCE   /* tests: any instantiated SEL value */
