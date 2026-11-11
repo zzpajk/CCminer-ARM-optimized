@@ -842,9 +842,28 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 			/* light merge: cases 0, 4, 8, 0x1c (index 0, 1, 2, 7 -> bit mask 0x87) all jump to case 0 */
 			sw = ((0x87u >> ((sw >> 2) & 7)) & 1) ? 0 : sw;
 		}
-		switch (FIXC >= 0 ? (uint64_t)FIXC : sw)
+		/* SEL bit 10 (1024), "fold": the round count of cases 0x14 and 0x18 (selector >> 61, 1..8 rounds) is
+		 * part of the jump index, and the jump enters the unrolled round chain at the right round (Duff's
+		 * device: round r is followed by r-1 .. 0). The jump mispredicts 7 times in 8 anyway; the separate,
+		 * equally unpredictable loop exit is gone, and inside a round the selector bit and the buffer word
+		 * are constants. Round r of R reads the key word prand[R - r], as the original rc++ does. */
+#define VERUS_FOLD ((SEL & 1024) && FIXC < 0)
+#define VERUS_CASE(c) (VERUS_FOLD ? (uint64_t)((c) >> 2) : (uint64_t)(c))
+#define VERUS_CASEX(c, r) (VERUS_FOLD ? (uint64_t)(((c) >> 2) | ((r) << 3)) : (uint64_t)(0x1000 + (c) * 8 + (r)))   /* dead labels when not folding */
+#define VERUS_CASEL(c) (VERUS_FOLD ? (uint64_t)(0x2000 + (c)) : (uint64_t)(c))                                 /* dead label when folding */
+#define VERUS_CASE8(c) case VERUS_CASE(c): case VERUS_CASEX(c, 1): case VERUS_CASEX(c, 2): case VERUS_CASEX(c, 3): \
+		case VERUS_CASEX(c, 4): case VERUS_CASEX(c, 5): case VERUS_CASEX(c, 6): case VERUS_CASEX(c, 7)
+		/* dead labels when not folding; with them all 64 index values have a label (no range check) */
+#define VERUS_CASED(r) (VERUS_FOLD ? (uint64_t)(7 | ((r) << 3)) : (uint64_t)(0x3000 + (r)))
+		/* Set only by the entry stubs of cases 0x14 / 0x18 (so nothing is added in front of the jump for the
+		 * other cases): entering at round r means R == r, so the last round's key word is prand + r. */
+		const __m128i *f_end = prand;              /* key word of the last round (round 0) */
+		uint64_t f_aes = 0;                        /* AES arms executed so far in case 0x14 */
+		__m128i f_ok = acc;                        /* 'onekey' of the last round in case 0x18 */
+		/* index = case | rounds << 3, as lsr #58 + bfxil (two instructions in front of the table load) */
+		switch (FIXC >= 0 ? (uint64_t)FIXC : VERUS_FOLD ? (((selector >> 58) & ~(uint64_t)7) | ((selector >> 2) & 7)) : sw)
 		{
-		case 0:
+		VERUS_CASE8(0):
 		if (SEL & 16) {
 			const uint64_t c = (selector >> 2) & 3;          /* 0: case 0, 1: case 4, 2: case 8, 3: case 0x1c */
 			__m128i *pa = (c == 1) ? prand : prandex;
@@ -886,7 +905,7 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 			*prandex  = _mm_xor_si128_emu(tempb1, temp12);
 			break;
 		}
-		case 4:
+		VERUS_CASE8(4):
 		{
 			const __m128i temp1 = VPRE_X;
 			const __m128i temp2 = VPRE_B;
@@ -911,7 +930,7 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 			_mm_store_si128_emu(prand, tempb2);
 			break;
 		}
-		case 8:
+		VERUS_CASE8(8):
 		{
 			const __m128i temp1 = VPRE_Y;
 			const __m128i temp2 = VPRE_B;
@@ -936,7 +955,7 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 			_mm_store_si128_emu(prandex, tempb2);
 			break;
 		}
-		case 0xc:
+		VERUS_CASE8(0xc):
 		{
 			const __m128i temp1 = VPRE_X;
 			const __m128i temp2 = VPRE_S;
@@ -999,7 +1018,7 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 			}
 			break;
 		}
-		case 0x10:
+		VERUS_CASE8(0x10):
 		{
 			// a few AES operations
 			const __m128i *rc = prand;
@@ -1027,7 +1046,7 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 			*prandex = _mm_xor_si128_emu(tempa1, tempa2);
 			break;
 		}
-		case 0x14:
+		case VERUS_CASEL(0x14):
 		{
 			// we'll just call this one the monkins loop, inspired by Chris
 			const __m128i *buftmp = pbsf;
@@ -1134,7 +1153,7 @@ if (SEL & 1) {
 
 			break;
 		}
-		case 0x18:
+		case VERUS_CASEL(0x18):
    {   
              const __m128i *buftmp = pbsf;
                 __m128i tmp; // used by MIX2
@@ -1224,6 +1243,96 @@ if (SEL & 2) {
                 _mm_store_si128_emu(prandex, onekey);
                 break;
             }
+		if (VERUS_FOLD) {
+			if (0) {
+				/* entry stubs; the empty asm keeps each stub a block of its own, so its two settings are not
+				 * moved in front of the case jump */
+#define VERUS_S14(r) case VERUS_CASEX(0x14, r): f_aes = 0; f_end = prand + (r); __asm__ volatile(""); goto verus_f14_##r;
+				VERUS_S14(7) VERUS_S14(6) VERUS_S14(5) VERUS_S14(4) VERUS_S14(3) VERUS_S14(2) VERUS_S14(1) VERUS_S14(0)
+#undef VERUS_S14
+#define VERUS_S18(r) case VERUS_CASEX(0x18, r): f_end = prand + (r); __asm__ volatile(""); goto verus_f18_##r;
+				VERUS_S18(7) VERUS_S18(6) VERUS_S18(5) VERUS_S18(4) VERUS_S18(3) VERUS_S18(2) VERUS_S18(1) VERUS_S18(0)
+#undef VERUS_S18
+			}
+#define VERUS_F14(r) verus_f14_##r: { \
+			__m128i onekey = _mm_load_si128_emu(f_end - (r)); \
+			const __m128i *rc = f_end - (r) + 1; __m128i tmp; \
+			if (SEL & 1) { \
+				const uint64_t bit = VERUS_ABL_INNER(selector, r) ? 1 : 0; \
+				const __m128i tc = _mm_load_si128_emu((r) & 1 ? pbuf : pbsf); \
+				const __m128i addc = _mm_xor_si128_emu(onekey, tc); \
+				const __m128i clprodc = _mm_clmulepi64_si128_emu(addc, addc, 0x10); \
+				__m128i ta = _mm_load_si128_emu((r) & 1 ? pbsf : pbuf); \
+				const uint64_t roundidx = f_aes << 2; \
+				AES2(onekey, ta, roundidx); \
+				MIX2_EMU(onekey, ta); \
+				const __m128i aesv = _mm_xor_si128_emu(onekey, ta); \
+				const uint64x2_t m = vdupq_n_u64(0 - bit); \
+				acc = _mm_xor_si128_emu(acc, vreinterpretq_s64_u64(vbslq_u64(m, vreinterpretq_u64_s64(clprodc), vreinterpretq_u64_s64(aesv)))); \
+				f_aes += 1 - bit; \
+			} else if (VERUS_ABL_INNER(selector, r)) { \
+				const __m128i temp2 = _mm_load_si128_emu((r) & 1 ? pbuf : pbsf); \
+				const __m128i add1 = _mm_xor_si128_emu(onekey, temp2); \
+				const __m128i clprod1 = _mm_clmulepi64_si128_emu(add1, add1, 0x10); \
+				acc = _mm_xor_si128_emu(clprod1, acc); \
+			} else { \
+				__m128i temp2 = _mm_load_si128_emu((r) & 1 ? pbsf : pbuf); \
+				const uint64_t roundidx = f_aes++ << 2; \
+				AES2(onekey, temp2, roundidx); \
+				MIX2_EMU(onekey, temp2); \
+				acc = _mm_xor_si128_emu(acc, _mm_xor_si128_emu(onekey, temp2)); \
+			} \
+			(void)rc; (void)tmp; }
+			VERUS_F14(7) VERUS_F14(6) VERUS_F14(5) VERUS_F14(4) VERUS_F14(3) VERUS_F14(2) VERUS_F14(1) VERUS_F14(0)
+#undef VERUS_F14
+			{
+				const __m128i tempa1 = VPRE_X;
+				const __m128i tempa2 = _mm_mulhrs_epi16_emu(acc, tempa1);
+				*prand = VPRE_Y;
+				*prandex = _mm_xor_si128_emu(tempa1, tempa2);
+			}
+			break;
+#define VERUS_F18(r) verus_f18_##r: { \
+			__m128i onekey = _mm_load_si128_emu(f_end - (r)); \
+			if (SEL & 2) { \
+				const uint64_t bit = VERUS_ABL_INNER(selector, r) ? 1 : 0; \
+				const __m128i td = _mm_load_si128_emu((r) & 1 ? pbuf : pbsf); \
+				const __m128i okd = _mm_xor_si128_emu(onekey, td); \
+				const int32_t divisor = (uint32_t)selector; \
+				const int64_t dividend = _mm_cvtsi128_si64(okd); \
+				const __m128i modulo = _mm_cvtsi32_si128(VERUS_ABL_MOD(dividend, divisor)); \
+				const __m128i accd = _mm_xor_si128_emu(modulo, acc); \
+				const __m128i tcl = _mm_load_si128_emu((r) & 1 ? pbsf : pbuf); \
+				const __m128i addc = _mm_xor_si128_emu(onekey, tcl); \
+				const __m128i okc = _mm_clmulepi64_si128_emu(addc, addc, 0x10); \
+				const __m128i accc = _mm_xor_si128_emu(_mm_mulhrs_epi16_emu(acc, okc), acc); \
+				const uint64x2_t m = vdupq_n_u64(0 - bit); \
+				acc = vreinterpretq_s64_u64(vbslq_u64(m, vreinterpretq_u64_s64(accd), vreinterpretq_u64_s64(accc))); \
+				f_ok = vreinterpretq_s64_u64(vbslq_u64(m, vreinterpretq_u64_s64(okd), vreinterpretq_u64_s64(okc))); \
+			} else if (VERUS_ABL_INNER(selector, r)) { \
+				const __m128i temp2 = _mm_load_si128_emu((r) & 1 ? pbuf : pbsf); \
+				onekey = _mm_xor_si128_emu(onekey, temp2); \
+				const int32_t divisor = (uint32_t)selector; \
+				const int64_t dividend = _mm_cvtsi128_si64(onekey); \
+				const __m128i modulo = _mm_cvtsi32_si128(VERUS_ABL_MOD(dividend, divisor)); \
+				acc = _mm_xor_si128_emu(modulo, acc); \
+				f_ok = onekey; \
+			} else { \
+				const __m128i temp4 = _mm_load_si128_emu((r) & 1 ? pbsf : pbuf); \
+				const __m128i add1 = _mm_xor_si128_emu(onekey, temp4); \
+				onekey = _mm_clmulepi64_si128_emu(add1, add1, 0x10); \
+				const __m128i clprod2 = _mm_mulhrs_epi16_emu(acc, onekey); \
+				acc = _mm_xor_si128_emu(clprod2, acc); \
+				f_ok = onekey; \
+			} }
+			VERUS_F18(7) VERUS_F18(6) VERUS_F18(5) VERUS_F18(4) VERUS_F18(3) VERUS_F18(2) VERUS_F18(1) VERUS_F18(0)
+#undef VERUS_F18
+			*prand = _mm_xor_si128_emu(VPRE_Y, acc);
+			_mm_store_si128_emu(prandex, f_ok);
+			break;
+		}
+		case VERUS_CASED(0): case VERUS_CASED(1): case VERUS_CASED(2): case VERUS_CASED(3):
+		case VERUS_CASED(4): case VERUS_CASED(5): case VERUS_CASED(6): case VERUS_CASED(7):
 		default: 
 		{
 			const __m128i temp1 = VPRE_B;
@@ -1251,6 +1360,12 @@ if (SEL & 2) {
    
 	}
 
+#undef VERUS_FOLD
+#undef VERUS_CASE
+#undef VERUS_CASEX
+#undef VERUS_CASEL
+#undef VERUS_CASE8
+#undef VERUS_CASED
 #undef VPRE_X
 #undef VPRE_Y
 #undef VPRE_B
@@ -1360,6 +1475,9 @@ template void verusclhash_port2_2_xN<2, 128>(void **, const unsigned char **, ui
 template void verusclhash_port2_2_xN<2, 131>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<2, 163>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<2, 227>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 1152>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 1155>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 1187>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<2, 512>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<2, 515>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<2, 547>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
@@ -1375,6 +1493,8 @@ template void verusclhash_port2_2_xN<1, 160>(void **, const unsigned char **, ui
 template void verusclhash_port2_2_xN<1, 163>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<1, 192>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<1, 224>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<1, 1152>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<1, 1155>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<1, 640>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<1, 672>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<3, 0>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);

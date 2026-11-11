@@ -47,6 +47,8 @@ static inline void verus_fixkey_pristine(const uint16_t * __restrict fixrand, co
  * Verus2hash_xN): the two Haraka512 interleaved. Instantiated: 39 128 131 163 227 (+256 needs no new one).
  * bit 9 (512): preload, the four operands every case starts with are loaded before the case jump
  * (instantiated: 512 515 547 640 643 675).
+ * bit 10 (1024): fold, the round count of cases 0x14 / 0x18 is part of the case jump, which enters the
+ * unrolled rounds at the right place (instantiated: 1152 1155 1187; scan values 1408 1411 1443).
  * The default comes from the build flags; x2percore picks it per core at run time. */
 #if defined(VERUS_SEL_FORCE)
 #  define VERUS_SEL_DEFAULT VERUS_SEL_FORCE   /* tests: any instantiated SEL value */
