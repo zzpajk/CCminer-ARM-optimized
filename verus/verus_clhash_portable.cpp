@@ -792,6 +792,7 @@ FORCE_INLINE __m128i verus_light_f(const __m128i v, const __m128i p, const uint6
 }
 
 /* FIXC >= 0: the case is known at compile time (fused dispatch, SEL bit 3), so the switch folds away. */
+typedef uint64_t __attribute__((may_alias)) verus_u64_alias;
 template<int SEL, int FIXC = -1>
 FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *randomsource,
 		const __m128i *pbuf_copy, uint64_t keyMask, uint16_t * __restrict fixrand,
@@ -808,10 +809,20 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 		const uint64_t selector_fudge = selector & 1 ? 1 : -1 ;
 
 		// get two random locations in the key, which will be mutated and swapped
+		/* SEL bit 11 (2048), "lean": fewer instructions in front of the case jump (the same work, bit-exact):
+		 * - the journal of touched key positions is ONE 64-bit store of the selector per round (both
+		 *   positions are bit fields of it) instead of two 16-bit stores; verus_fixkey_pristine_sel() takes
+		 *   the positions from it. fixrand must then hold 32 * 8 bytes; fixrandex is not used.
+		 * - pbsf = pbuf -/+ 1 is index (selector & 3) ^ 1 of the same four words
+		 * - with fold, the jump index is two instructions (lsr #58 + bfxil) */
+		if (SEL & 2048) {
+			*(verus_u64_alias *)(fixrand + 4 * i) = selector;
+		} else {
 		fixrand[i]  = (uint16_t) ((selector >> 5) & keyMask);
 		fixrandex[i] = (uint16_t) ((selector >>32) & keyMask);
-		__m128i *prand = randomsource + fixrand[i];
-		__m128i *prandex = randomsource + fixrandex[i];
+		}
+		__m128i *prand = randomsource + ((SEL & 2048) ? ((selector >> 5) & keyMask) : (uint64_t)fixrand[i]);
+		__m128i *prandex = randomsource + ((SEL & 2048) ? ((selector >> 32) & keyMask) : (uint64_t)fixrandex[i]);
 		if (!(SEL & 128)) {   /* bit 128: no journal, the caller restores from a pristine key copy */
 			g_prand[i] = *prand;
 			g_prandex[i] = *prandex;
@@ -821,7 +832,7 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 
 		// select random start and order of pbuf processing
 		pbuf = pbuf_copy + (selector & 3);
-		pbsf = pbuf - selector_fudge;
+		pbsf = (SEL & 2048) ? pbuf_copy + ((selector & 3) ^ 1) : pbuf - selector_fudge;
 		/* SEL bit 9 (512), "preload": every case starts by reading *prand, *prandex, *pbuf and *pbsf (before
 		 * any store of the round), so they are loaded here, BEFORE the unpredictable case jump. After a
 		 * mispredict the case then starts with its operands ready instead of waiting for the loads. */
@@ -861,7 +872,14 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 		uint64_t f_aes = 0;                        /* AES arms executed so far in case 0x14 */
 		__m128i f_ok = acc;                        /* 'onekey' of the last round in case 0x18 */
 		/* index = case | rounds << 3, as lsr #58 + bfxil (two instructions in front of the table load) */
-		switch (FIXC >= 0 ? (uint64_t)FIXC : VERUS_FOLD ? (((selector >> 58) & ~(uint64_t)7) | ((selector >> 2) & 7)) : sw)
+		uint64_t fidx = ((selector >> 58) & ~(uint64_t)7) | ((selector >> 2) & 7);
+#if defined(__aarch64__)
+		if (VERUS_FOLD && (SEL & 2048)) {
+			__asm__("lsr %0, %1, #58\n\tbfxil %0, %1, #2, #3" : "=&r"(fidx) : "r"(selector));
+			if (fidx > 63) __builtin_unreachable();
+		}
+#endif
+		switch (FIXC >= 0 ? (uint64_t)FIXC : VERUS_FOLD ? fidx : sw)
 		{
 		VERUS_CASE8(0):
 		if (SEL & 16) {
@@ -1333,7 +1351,7 @@ if (SEL & 2) {
 		}
 		case VERUS_CASED(0): case VERUS_CASED(1): case VERUS_CASED(2): case VERUS_CASED(3):
 		case VERUS_CASED(4): case VERUS_CASED(5): case VERUS_CASED(6): case VERUS_CASED(7):
-		default: 
+		verus_case_1c:
 		{
 			const __m128i temp1 = VPRE_B;
 			const __m128i temp2 = VPRE_Y;
@@ -1353,8 +1371,13 @@ if (SEL & 2) {
 			const __m128i tempb1 = _mm_mulhrs_epi16_emu(acc, tempa3);
 			const __m128i tempb2 = _mm_xor_si128_emu(tempb1, tempa3);
 			_mm_store_si128_emu(prandex, tempb2);
-		//	break;
+			break;
 		}
+		default:
+			/* lean + fold: the index comes from inline asm, so tell the compiler that every value has a
+			 * label (no range check in front of the table jump) */
+			if (VERUS_FOLD && (SEL & 2048)) __builtin_unreachable();
+			goto verus_case_1c;
 		}
 
    
@@ -1478,6 +1501,8 @@ template void verusclhash_port2_2_xN<2, 227>(void **, const unsigned char **, ui
 template void verusclhash_port2_2_xN<2, 1152>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<2, 1155>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<2, 1187>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 3200>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 2176>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<2, 512>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<2, 515>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<2, 547>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
@@ -1495,6 +1520,8 @@ template void verusclhash_port2_2_xN<1, 192>(void **, const unsigned char **, ui
 template void verusclhash_port2_2_xN<1, 224>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<1, 1152>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<1, 1155>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<1, 3200>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<1, 2176>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<1, 640>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<1, 672>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<3, 0>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);

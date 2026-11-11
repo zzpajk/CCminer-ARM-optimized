@@ -35,6 +35,19 @@ static inline void verus_fixkey_pristine(const uint16_t * __restrict fixrand, co
 	}
 }
 
+/* SEL bit 11 (2048): the journal is the round's 64-bit selector (32 of them at sj); the two key positions of
+ * a round are its bits 5..13 and 32..40 (keyMask 511). */
+static inline void verus_fixkey_pristine_sel(const uint16_t * __restrict sj16, __m128i * __restrict key, const __m128i * __restrict pristine)
+{
+	typedef uint64_t __attribute__((may_alias)) u64a;
+	const u64a *sj = (const u64a *)sj16;
+	for (int i = 0; i < 32; i++) {
+		const uint64_t s = sj[i], a = (s >> 5) & 511, b = (s >> 32) & 511;
+		key[a] = pristine[a];
+		key[b] = pristine[b];
+	}
+}
+
 #ifdef VERUS_X2
 /* N independent nonces in lockstep (N = 2, 3 or 4); each lane needs its own copy of the key */
 /* SEL bit 0: branch-free inner choice in case 0x14, bit 1: same in case 0x18 (variants x2sel, x2sel2),
@@ -49,6 +62,8 @@ static inline void verus_fixkey_pristine(const uint16_t * __restrict fixrand, co
  * (instantiated: 512 515 547 640 643 675).
  * bit 10 (1024): fold, the round count of cases 0x14 / 0x18 is part of the case jump, which enters the
  * unrolled rounds at the right place (instantiated: 1152 1155 1187; scan values 1408 1411 1443).
+ * bit 11 (2048): lean, selector journal (fixrand must hold 256 bytes) + shorter code in front of the case jump
+ * (instantiated: 2176 3200; scan values 2432 3456; needs bit 128).
  * The default comes from the build flags; x2percore picks it per core at run time. */
 #if defined(VERUS_SEL_FORCE)
 #  define VERUS_SEL_DEFAULT VERUS_SEL_FORCE   /* tests: any instantiated SEL value */

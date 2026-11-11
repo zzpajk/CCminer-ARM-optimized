@@ -28,7 +28,7 @@ int main(int argc, char **argv)
 	long iters = argc > 1 ? atol(argv[1]) : 20000, bad = 0;
 	alignas(64) __m128i key0[560], keyS[560], keyL[4][560];
 	alignas(64) __m128i gpL[4][32], gpxL[4][32], gpS[32], gpxS[32];
-	uint16_t frL[4][32], freL[4][32], frS[32], freS[32];
+	alignas(16) uint16_t frL[4][128], freL[4][32], frS[32], freS[32];
 	for (long it = 0; it < iters; it++) {
 		if (it % 100 == 0) { fill(key0, sizeof(key0)); }
 		alignas(16) unsigned char half[64], bS[64], bL[4][64];

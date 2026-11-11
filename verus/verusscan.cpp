@@ -347,7 +347,7 @@ static int verus_sel_for_cpu(int cpu)
 #endif
 	static int env = -2;
 	if (env == -2) { const char *e = getenv("VERUS_SEL"); env = -1;
-		if (e && e[0]) { char *end; long x = strtol(e, &end, 10); if (!*end && (x == 0 || x == 1 || x == 2 || x == 3 || x == 4 || x == 5 || x == 7 || x == 8 || x == 9 || x == 11 || x == 16 || x == 32 || x == 48 || x == 19 || x == 35 || x == 51 || x == 64 || x == 67 || x == 99 || x == 39 || x == 128 || x == 131 || x == 163 || x == 227 || x == 256 || x == 259 || x == 291 || x == 355 || x == 384 || x == 387 || x == 419 || x == 483 || x == 512 || x == 515 || x == 547 || x == 640 || x == 643 || x == 675 || x == 768 || x == 771 || x == 803 || x == 896 || x == 899 || x == 931 || x == 1408 || x == 1411 || x == 1443)) env = (int)x; } }
+		if (e && e[0]) { char *end; long x = strtol(e, &end, 10); if (!*end && (x == 0 || x == 1 || x == 2 || x == 3 || x == 4 || x == 5 || x == 7 || x == 8 || x == 9 || x == 11 || x == 16 || x == 32 || x == 48 || x == 19 || x == 35 || x == 51 || x == 64 || x == 67 || x == 99 || x == 39 || x == 128 || x == 131 || x == 163 || x == 227 || x == 256 || x == 259 || x == 291 || x == 355 || x == 384 || x == 387 || x == 419 || x == 483 || x == 512 || x == 515 || x == 547 || x == 640 || x == 643 || x == 675 || x == 768 || x == 771 || x == 803 || x == 896 || x == 899 || x == 931 || x == 1408 || x == 1411 || x == 1443 || x == 2432 || x == 3456)) env = (int)x; } }
 	if (env >= 0) sel = env;
 #ifndef VERUS_PRISTINE
 	sel &= ~128;   /* the journal-free two-nonce restore needs the pristine key copy */
@@ -372,7 +372,7 @@ static int verus_lanes_for_this_core(int thr_id, int *sel)
 	*sel = (lanes > 1 && VERUS_LANES == 2) ? verus_sel_for_cpu(cpu) : 0;
 	static __thread int logged = 0;
 	if (!logged) { logged = 1; applog(LOG_INFO, "Verus thread %d on cpu %d: %d nonce(s) per step%s", thr_id, cpu, lanes,
-		lanes == 1 ? "" : (*sel >= 1024 ? ", +fold" : *sel >= 512 ? ", +preload" : *sel >= 128 ? ((*sel & 256) ? ((*sel & 128) ? ", +haraka2+pristine" : ", +haraka2") : ", +pristine") : *sel == 39 ? ", sel3+selc" : *sel == 99 ? ", sel2+selc+bt" : *sel == 67 ? ", sel2+bt" : *sel == 64 ? ", bt" : *sel == 51 ? ", sel2+light+selc" : *sel == 35 ? ", sel2+selc" : *sel == 19 ? ", sel2+light" : *sel == 48 ? ", light+selc" : *sel == 32 ? ", selc" : *sel == 16 ? ", light" : *sel == 11 ? ", fuse+sel2" : *sel == 9 ? ", fuse+sel" : *sel == 8 ? ", fuse" : *sel == 7 ? ", sel3" : *sel == 5 ? ", sel14+full14" : *sel == 4 ? ", full14" : *sel == 3 ? ", sel2" : *sel == 1 ? ", sel" : *sel == 2 ? ", sel18" : "")); }
+		lanes == 1 ? "" : (*sel >= 3072 ? ", +fold+lean" : *sel >= 2048 ? ", +lean" : *sel >= 1024 ? ", +fold" : *sel >= 512 ? ", +preload" : *sel >= 128 ? ((*sel & 256) ? ((*sel & 128) ? ", +haraka2+pristine" : ", +haraka2") : ", +pristine") : *sel == 39 ? ", sel3+selc" : *sel == 99 ? ", sel2+selc+bt" : *sel == 67 ? ", sel2+bt" : *sel == 64 ? ", bt" : *sel == 51 ? ", sel2+light+selc" : *sel == 35 ? ", sel2+selc" : *sel == 19 ? ", sel2+light" : *sel == 48 ? ", light+selc" : *sel == 32 ? ", selc" : *sel == 16 ? ", light" : *sel == 11 ? ", fuse+sel2" : *sel == 9 ? ", fuse+sel" : *sel == 8 ? ", fuse" : *sel == 7 ? ", sel3" : *sel == 5 ? ", sel14+full14" : *sel == 4 ? ", full14" : *sel == 3 ? ", sel2" : *sel == 1 ? ", sel" : *sel == 2 ? ", sel18" : "")); }
 	return lanes;
 #else
 	(void)thr_id;
@@ -405,7 +405,7 @@ static __attribute__((noinline)) void verus_scan_lanes(struct verus_scan_ctx *c)
 	alignas(64) __m128i keyL[NX][VERUS_KEY_SIZE128 + 8];
 	alignas(64) __m128i gpL[NX][32], gpxL[NX][32];
 	alignas(16) uint8_t halfL[NX][64];
-	uint16_t fixrandL[NX][32], fixrandexL[NX][32];
+	uint16_t fixrandL[NX][128] __attribute__((aligned(16))), fixrandexL[NX][32];   /* 128: selector journal (SEL bit 2048) */
 	struct verus_lane L[NLT];
 	L[0] = (struct verus_lane){ c->data_key, c->fixrand, c->fixrandex, c->gp, c->gpx, c->blockhash_half, c->pristine };
 	for (int l = 1; l < NL; l++) {
@@ -485,7 +485,7 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 	//__m128i *data_key_prandex = data_key + VERUS_KEY_SIZE128 + 32;
 
 	uint32_t nonce_buf = 0;
-	uint16_t fixrand[32] __attribute__ ((aligned(64)));
+	uint16_t fixrand[128] __attribute__ ((aligned(64)));   /* 128: room for the selector journal (SEL bit 2048) */
 	uint16_t fixrandex[32] __attribute__ ((aligned(64)));
 
 	unsigned char block_41970[3] = { 0xfd, 0x40, 0x05};
@@ -552,6 +552,8 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 #endif
 			};
 		switch (sel) {
+		case 3456: verus_scan_lanes<3456>(&c); break;
+		case 2432: verus_scan_lanes<2432>(&c); break;
 		case 1443: verus_scan_lanes<1443>(&c); break;
 		case 1411: verus_scan_lanes<1411>(&c); break;
 		case 1408: verus_scan_lanes<1408>(&c); break;
@@ -608,7 +610,7 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 		 * and SEL N (128 = journal-free, i.e. the same algorithm as the default single-nonce loop) */
 		static int sel1 = -2;
 		if (sel1 == -2) { const char *e = getenv("VERUS_SEL1"); sel1 = -1; if (e && e[0]) { char *end; long x = strtol(e, &end, 10);
-			if (!*end && (x == 128 || x == 129 || x == 130 || x == 131 || x == 160 || x == 163 || x == 192 || x == 224 || x == 640 || x == 672 || x == 1152 || x == 1155)) sel1 = (int)x;
+			if (!*end && (x == 128 || x == 129 || x == 130 || x == 131 || x == 160 || x == 163 || x == 192 || x == 224 || x == 640 || x == 672 || x == 1152 || x == 1155 || x == 2176 || x == 3200)) sel1 = (int)x;
 			else if (!*end && x == 0) sel1 = -3; } }   /* VERUS_SEL1=0: always the plain single-nonce loop */
 		int use1 = sel1;
 #ifdef VERUS_PERCORE
@@ -623,6 +625,8 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 			struct verus_scan_ctx c = { work, thr_id, max_nonce, hashes_done, nonce_buf, nonceSpace, full_data, sol_data,
 				Htarg, vhash, data_key, fixrand, fixrandex, data_key_prand, data_key_prandex, blockhash_half, tv_start, pristine_key };
 			switch (use1) {
+			case 3200: verus_scan_lanes<3200, 1>(&c); break;
+			case 2176: verus_scan_lanes<2176, 1>(&c); break;
 			case 1152: verus_scan_lanes<1152, 1>(&c); break;
 			case 1155: verus_scan_lanes<1155, 1>(&c); break;
 			case 129: verus_scan_lanes<129, 1>(&c); break;

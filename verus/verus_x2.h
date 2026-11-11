@@ -25,7 +25,7 @@ extern "C" {
 
 struct verus_lane {
 	__m128i *key;                   /* private copy of the generated key (>= 552 x 16 bytes) */
-	uint16_t *fixrand, *fixrandex;  /* 32 entries each */
+	uint16_t *fixrand, *fixrandex;  /* 32 entries each; fixrand 128 entries (256 bytes) for SEL bit 2048 */
 	__m128i *gp, *gpx;              /* 32 entries each */
 	unsigned char *buf;             /* private 64-byte VerusHashHalf copy */
 	const __m128i *pristine;        /* untouched copy of the key (SEL bit 128); NULL if not used */
@@ -75,7 +75,9 @@ static inline void Verus2hash_xN(unsigned char *const *hash, struct verus_lane *
 	for (int l = 0; l < N; l++) hash[l][28] = (unsigned char)im[l];   /* timing experiment only (tests/verus_ablate.cpp) */
 #endif
 #ifndef VERUS_ABL_NOFIX
-	if (SEL & 128)
+	if ((SEL & 128) && (SEL & 2048))
+		for (int l = 0; l < N; l++) verus_fixkey_pristine_sel(L[l].fixrand, L[l].key, L[l].pristine);
+	else if (SEL & 128)
 		for (int l = 0; l < N; l++) verus_fixkey_pristine(L[l].fixrand, L[l].fixrandex, L[l].key, L[l].pristine);
 	else
 		for (int l = 0; l < N; l++) verus_fixkey_lane(&L[l]);
