@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# phone-runner.sh v1.6.5 - lets Claude queue Verus benchmark jobs for this phone through a private GitHub repo.
+# phone-runner.sh v1.6.8 - lets Claude queue Verus benchmark jobs for this phone through a private GitHub repo.
 #
 # The phone polls the jobs repo (git over SSH with a deploy key that can only reach that one repo), runs
 # each new job for this phone and commits the output back. A job can ONLY run one of the scripts in
@@ -14,15 +14,16 @@
 #   bash phone-runner.sh start|stop|status|log
 #
 # Jobs repo layout (written by Claude):    jobs/NAME/<id>.job
-#   script=bench | sweep | info | led | cpuset | cpuwatch | usb | load | termux-install | runner-update   (led: arg=cyan|magenta|...|off; cpuset: arg=show|widen|restore;
+#   script=bench | sweep | info | led | cpuset | cpuwatch | usb | load | perf | termux-install | runner-update   (led: arg=cyan|magenta|...|off; cpuset: arg=show|widen|restore;
 #          cpuwatch: arg=MINUTES + arg=widen|nowiden; usb: arg=snapshot  or  arg=watch + arg=SECONDS, read-only USB/Type-C diagnostics;
-#          termux-install: optional arg=--no-upgrade, builds ~/ccminer/ccminer-verus)
+#          termux-install: optional arg=--no-upgrade, builds ~/ccminer/ccminer-verus;
+#          perf: arg=SECONDS, arg=auto|CPULIST, arg=stat|record|both, arg=default|SEL list: simpleperf counters, root, benchmark only)
 #   commit=<fork commit, full 40-hex SHA> (not needed for info)
 #   arg=<one argument per line>          e.g.  arg=-v   then   arg=baseline x2auto x2percore
 #   timeout=<minutes>                    optional, default 240
 # Results (written by the phone):         results/NAME/<id>/{status,console.log,report.txt}, results/NAME/heartbeat.txt
 set -u
-RUNNER_VERSION=1.6.7
+RUNNER_VERSION=1.6.8
 JOBS_REPO="${VERUS_JOBS_REPO:-git@github.com:zzpajk/verus-phone-jobs.git}"
 FORK="${VERUS_FORK:-https://github.com/zzpajk/CCminer-ARM-optimized.git}"
 CONF="$HOME/.verus-runner.conf"
@@ -115,7 +116,7 @@ run_job() { # job-file
 	done < "$f"
 	set +f
 	case "$tmo" in ''|*[!0-9]*) tmo=240;; esac
-	case "$script" in bench|sweep|led|cpuset|cpuwatch|usb|load|termux-install|runner-update) case "$commit" in [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) ;; *)
+	case "$script" in bench|sweep|led|cpuset|cpuwatch|usb|load|perf|termux-install|runner-update) case "$commit" in [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) ;; *)
 		echo "failed $(date '+%F %T') bad commit: $commit" > "$R/status"; push_results "job $id rejected"; return;; esac;;
 	info) ;; *) echo "failed $(date '+%F %T') unknown script: $script" > "$R/status"; push_results "job $id rejected"; return;; esac
 	case "$commit" in *[!0-9a-f]*) echo "failed $(date '+%F %T') bad commit: $commit" > "$R/status"; push_results "job $id rejected"; return;; esac
@@ -145,6 +146,9 @@ run_job() { # job-file
 	cpuwatch)
 		path=$(fetch_script "$commit" phone-cpuwatch.sh) && timeout $((tmo * 60)) bash "$path" "${args[@]}" > "$RUNS/cpuwatch-$id.log" 2>&1; rc=$?
 		[ -n "$path" ] && cp "$RUNS/cpuwatch-$id.log" "$R/console.log" || { echo "could not fetch phone-cpuwatch.sh at $commit" > "$R/console.log"; rc=1; };;
+	perf)
+		path=$(fetch_script "$commit" phone-perf.sh) && timeout $((tmo * 60)) bash "$path" "${args[@]}" > "$RUNS/perf-$id.log" 2>&1 </dev/null; rc=$?
+		[ -n "$path" ] && cp "$RUNS/perf-$id.log" "$R/console.log" || { echo "could not fetch phone-perf.sh at $commit" > "$R/console.log"; rc=1; };;
 	cpuset)
 		path=$(fetch_script "$commit" phone-cpuset.sh) && timeout 60 bash "$path" "${args[@]}" > "$R/console.log" 2>&1; rc=$?
 		[ -n "$path" ] || { echo "could not fetch phone-cpuset.sh at $commit" > "$R/console.log"; rc=1; };;
