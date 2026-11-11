@@ -4,7 +4,8 @@
 # Needs Android root (su) and simpleperf (part of Android: /system/bin or /system/xbin). Changes no settings.
 #   seconds  length of each measurement (default 30); a run = 10 s warm-up + 2 stat passes + 1 record pass
 #   cpus     "auto" (default: the first allowed CPU of every cluster) or a list such as 0,4
-#   mode     stat | record | both (default both)
+#   mode     stat | record | both (default both) | full (record, then every instruction of each function
+#            holding >= 2% of the samples, with its share: long output)
 #   sels     "default" (the miner's own per-core choice) or a list such as default,384,419: one run per value,
 #            the numbers are passed as VERUS_SEL. "l1" forces VERUS_LANES=1 (single-nonce loop).
 # Output per run: hashrate, counters per second and PER HASH (cycles, instructions, branch misses, cache
@@ -13,7 +14,7 @@
 set -u
 SEC="${1:-30}"; CPUS="${2:-auto}"; MODE="${3:-both}"; SELS="${4:-default}"; shift $(( $# < 4 ? $# : 4 ))
 case "$SEC" in ''|*[!0-9]*|0) echo "seconds must be a number"; exit 2;; esac
-case "$MODE" in stat|record|both) ;; *) echo "mode must be stat, record or both"; exit 2;; esac
+case "$MODE" in stat|record|both|full) ;; *) echo "mode must be stat, record, both or full"; exit 2;; esac
 case "$CPUS" in auto) ;; *[!0-9,]*|'') echo "cpus must be auto or a list like 0,4"; exit 2;; esac
 case "$SELS" in *[!a-z0-9,]*|'') echo "sels must be a list like default,384,l1"; exit 2;; esac
 ts() { date '+%F %T'; }
@@ -90,12 +91,25 @@ record_pass() {
 	echo "--- where the cycles go ($SEC s, 2000 samples/s)"
 	asroot $((SEC + 60)) "$SP record -e cpu-cycles -f 2000 -p $MP --duration $SEC -o $DATA" 2>&1 | grep -vE '^$' | tail -4
 	echo "by symbol:"
-	asroot 120 "$SP report -i $DATA --sort dso,symbol" 2>&1 | grep -E '%' | head -25 | cut -c1-170
-	local hot; hot=$(asroot 120 "$SP report -i $DATA --sort dso,vaddr_in_file" 2>&1 | grep -E '%' | grep ccminer | head -80)
+	asroot 120 "$SP report -i $DATA --sort dso,symbol" 2>&1 | grep -E '%' | sed -n 1,12p | cut -c1-170
+	local hot; hot=$(asroot 120 "$SP report -i $DATA --sort dso,vaddr_in_file" 2>&1 | grep -E '%' | grep ccminer | sed -n "1,$([ "$MODE" = full ] && echo 20000 || echo 80)p")
 	if [ -z "$hot" ]; then echo "(this simpleperf has no per-address report)"; return; fi
 	if [ $DISOK = 0 ]; then
 		local od; od=$(command -v llvm-objdump || command -v objdump)
 		[ -n "$od" ] && "$od" -d --no-show-raw-insn "$BIN" > "$DIS" 2>/dev/null && [ -s "$DIS" ] && DISOK=1
+	fi
+	if [ $DISOK = 1 ] && [ "$MODE" = full ]; then
+		echo "every instruction of the functions with >= 2% of the samples (% of all samples):"
+		echo "$hot" | awk '{p = $1; a = $NF; sub(/^0x/, "", a); print "H", tolower(a), p}' | cat - "$DIS" | awk '
+			$1 == "H" { pc[$2] = $3 + 0; next }
+			/^[0-9a-f]+ <.*>:$/ { nf++; fname[nf] = $2; first[nf] = n + 1; next }
+			nf && /^ *[0-9a-f]+:/ { a = $1; sub(/:$/, "", a); sub(/^0+/, "", a); n++; line[n] = $0; fl[n] = nf; if (a in pc) { h[n] = pc[a]; tot[nf] += pc[a] } }
+			END { for (i = 1; i <= n; i++) if (tot[fl[i]] >= 2) {
+					if (i == first[fl[i]]) printf "== %s: %.2f%%\n", fname[fl[i]], tot[fl[i]]
+					s = line[i]; gsub(/[ \t]+/, " ", s); sub(/ <[^>]*>$/, "", s)
+					printf "%s%s\n", (i in h ? sprintf("%5.2f", h[i]) : "     "), s } }' | cut -c1-110
+		asroot 15 "rm -f $DATA" 2>/dev/null
+		return
 	fi
 	echo "hottest instructions (% of all samples; 2 lines of context; '....' = gap):"
 	if [ $DISOK = 1 ]; then
@@ -128,7 +142,7 @@ for cpu in $(echo "$CPUS" | tr ',' ' '); do
 		case "$MODE" in stat|both)
 			stat_pass "counters, pass 1" "$EV1"
 			[ -n "$EV2" ] && [ "$EV2" != cpu-cycles ] && stat_pass "counters, pass 2 (cache / TLB)" "$EV2";; esac
-		case "$MODE" in record|both) record_pass;; esac
+		case "$MODE" in record|both|full) record_pass;; esac
 		echo "--- $(ts) final hashrate $(awk -v h="$(rate_hs "$LOG")" 'BEGIN {printf "%.1f kH/s", h / 1e3}'), clock now $(( $(cat $C/cpu$cpu/cpufreq/scaling_cur_freq 2>/dev/null || echo 0) / 1000 )) MHz"
 		kill "$MP" 2>/dev/null; wait "$MP" 2>/dev/null; MP=""
 		sleep 3
