@@ -608,11 +608,21 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 		 * and SEL N (128 = journal-free, i.e. the same algorithm as the default single-nonce loop) */
 		static int sel1 = -2;
 		if (sel1 == -2) { const char *e = getenv("VERUS_SEL1"); sel1 = -1; if (e && e[0]) { char *end; long x = strtol(e, &end, 10);
-			if (!*end && (x == 128 || x == 129 || x == 130 || x == 131 || x == 160 || x == 163 || x == 192 || x == 224 || x == 640 || x == 672 || x == 1152 || x == 1155)) sel1 = (int)x; } }
-		if (sel1 >= 0) {
+			if (!*end && (x == 128 || x == 129 || x == 130 || x == 131 || x == 160 || x == 163 || x == 192 || x == 224 || x == 640 || x == 672 || x == 1152 || x == 1155)) sel1 = (int)x;
+			else if (!*end && x == 0) sel1 = -3; } }   /* VERUS_SEL1=0: always the plain single-nonce loop */
+		int use1 = sel1;
+#ifdef VERUS_PERCORE
+		/* Cortex-A53: one lane through the lane code with fold (1152) instead of the plain loop. S8, one
+		 * thread, simpleperf 2026-11-11: 55.4 -> 48.1 mispredicts, 2376 -> 2135 instructions, 3322 -> 3076
+		 * cycles per hash, 506.5 -> 547.1 kH/s (+8.0%, two runs each; s128 without fold: 502). Other
+		 * in-order cores (A55 ...) are not measured yet and keep the plain loop. */
+		if (sel1 == -1) { int cpu = sched_getcpu(); if (cpu >= 0 && cpu < 1024 && g_impl[cpu] == 0x41 && g_part[cpu] == 0xd03) use1 = 1152; }
+#endif
+		if (use1 >= 0) {
+			{ static __thread int logged1 = 0; if (!logged1) { logged1 = 1; applog(LOG_INFO, "Verus thread %d: single-nonce lane code, SEL %d%s", thr_id, use1, use1 >= 1024 ? " (fold)" : ""); } }
 			struct verus_scan_ctx c = { work, thr_id, max_nonce, hashes_done, nonce_buf, nonceSpace, full_data, sol_data,
 				Htarg, vhash, data_key, fixrand, fixrandex, data_key_prand, data_key_prandex, blockhash_half, tv_start, pristine_key };
-			switch (sel1) {
+			switch (use1) {
 			case 1152: verus_scan_lanes<1152, 1>(&c); break;
 			case 1155: verus_scan_lanes<1155, 1>(&c); break;
 			case 129: verus_scan_lanes<129, 1>(&c); break;
