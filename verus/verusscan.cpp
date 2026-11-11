@@ -333,6 +333,12 @@ static int verus_sel_for_cpu(int cpu)
 		 * per hash, 2365 -> 2294 cycles, 973 -> 1004 kH/s (+3.1%, two runs each). On top of sel2 (387 -> 1411,
 		 * 1443) it gains nothing on the M2; other cores not measured yet. */
 		if (g_impl[cpu] == 0x53 && g_part[cpu] == 0x001) sel |= 1024;
+		/* ... and lean (2048): 13 instead of 17 instructions in front of the case jump, selector journal.
+		 * S8 M2, same build, one thread: 1408 985 kH/s (2337 cycles, 2238 instructions per hash) -> 3456
+		 * 1032-1036 kH/s (2228 cycles, 2133 instructions, same mispredicts), three runs. Threaded dispatch
+		 * (7552) is equal (1032) with more code and 5 more mispredicts per hash; on the A53 lean and
+		 * threaded both lose 5-8% to 1152 (set-up after the jump / restore loop), so the A53 keeps 1152. */
+		if (g_impl[cpu] == 0x53 && g_part[cpu] == 0x001) sel |= 2048;
 		/* Qualcomm Kryo Gold cores report implementer 0x51 but are Cortex derivatives: use the path of the
 		 * Cortex core they are built on. NOT measured yet (no such phone tested): 0x800 Kryo 280 Gold (A73,
 		 * SD835), 0x802 Kryo 385 Gold (A75, SD845 / 7xx), 0x804 Kryo 485 Gold (A76, SD855 / 7xx). */

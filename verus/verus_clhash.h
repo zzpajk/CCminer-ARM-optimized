@@ -41,10 +41,15 @@ static inline void verus_fixkey_pristine_sel(const uint16_t * __restrict sj16, _
 {
 	typedef uint64_t __attribute__((may_alias)) u64a;
 	const u64a *sj = (const u64a *)sj16;
-	for (int i = 0; i < 32; i++) {
-		const uint64_t s = sj[i], a = (s >> 5) & 511, b = (s >> 32) & 511;
-		key[a] = pristine[a];
-		key[b] = pristine[b];
+	/* Two rounds at a time, all four loads before the four stores: with load, store, load, store an in-order
+	 * core (Cortex-A53) waits at every store for the load in front of it (S8 profile 2026-11-11: this loop
+	 * took 13% of the hash that way, the 16-bit version 10%). The order is free: every store writes the
+	 * pristine value of its own position. */
+	for (int i = 0; i < 32; i += 2) {
+		const uint64_t s0 = sj[i], s1 = sj[i + 1];
+		const uint64_t a0 = (s0 >> 5) & 511, b0 = (s0 >> 32) & 511, a1 = (s1 >> 5) & 511, b1 = (s1 >> 32) & 511;
+		const __m128i v0 = pristine[a0], v1 = pristine[b0], v2 = pristine[a1], v3 = pristine[b1];
+		key[a0] = v0; key[b0] = v1; key[a1] = v2; key[b1] = v3;
 	}
 }
 
