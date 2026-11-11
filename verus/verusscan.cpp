@@ -328,6 +328,11 @@ static int verus_sel_for_cpu(int cpu)
 		 * (what build-verus.sh uses) 483 beats preload (931) on A75 +3.9%, X1 +3.1%, A78 +1.9% (sweep -C 17);
 		 * with clang 14 preload had looked better (A75 +3.2%, A78 +1.8%, X1 +1.3% over 419). Mongoose: 419. */
 		if (g_impl[cpu] == 0x41 && g_part[cpu] != 0xd09) sel = 483;
+		/* Mongoose M1/M2: fold (1024), the round count of cases 0x14 / 0x18 in the case jump. S8 (M2), one
+		 * thread, simpleperf 2026-11-11: 384 -> 1408 = 59.5 -> 48.4 mispredicts and 2281 -> 2177 instructions
+		 * per hash, 2365 -> 2294 cycles, 973 -> 1004 kH/s (+3.1%, two runs each). On top of sel2 (387 -> 1411,
+		 * 1443) it gains nothing on the M2; other cores not measured yet. */
+		if (g_impl[cpu] == 0x53 && g_part[cpu] == 0x001) sel |= 1024;
 		/* Qualcomm Kryo Gold cores report implementer 0x51 but are Cortex derivatives: use the path of the
 		 * Cortex core they are built on. NOT measured yet (no such phone tested): 0x800 Kryo 280 Gold (A73,
 		 * SD835), 0x802 Kryo 385 Gold (A75, SD845 / 7xx), 0x804 Kryo 485 Gold (A76, SD855 / 7xx). */

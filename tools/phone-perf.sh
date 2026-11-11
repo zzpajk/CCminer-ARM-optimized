@@ -8,6 +8,7 @@
 #            holding >= 2% of the samples, with its share: long output)
 #   sels     "default" (the miner's own per-core choice) or a list such as default,384,419: one run per value,
 #            the numbers are passed as VERUS_SEL. "l1" forces VERUS_LANES=1 (single-nonce loop).
+#            "sN" (s128, s1152) sets VERUS_SEL1=N: single-nonce cores through the lane code with one lane.
 # Output per run: hashrate, counters per second and PER HASH (cycles, instructions, branch misses, cache
 # misses), IPC, branch-miss rate; then where the cycles go: by symbol, and the hottest instructions of the
 # ccminer binary with their disassembly (sample addresses can be one instruction late: counter skid).
@@ -132,7 +133,7 @@ for cpu in $(echo "$CPUS" | tr ',' ' '); do
 	for sel in $(echo "$SELS" | tr ',' ' '); do
 		LOG="$TMPD/miner-cpu$cpu-$sel.log"
 		( unset VERUS_SEL VERUS_LANES VERUS_SEL1 VERUS_PRE1
-		  case "$sel" in default) ;; l1) export VERUS_LANES=1;; *) export VERUS_SEL="$sel";; esac
+		  case "$sel" in default) ;; l1) export VERUS_LANES=1;; s[0-9]*) export VERUS_SEL1="${sel#s}";; *) export VERUS_SEL="$sel";; esac
 		  exec "$BIN" -a verus --benchmark -t 1 --cpu-affinity "$(printf '0x%x' $((1 << cpu)))" --no-color "$@" ) > "$LOG" 2>&1 < /dev/null &
 		MP=$!
 		sleep 10
