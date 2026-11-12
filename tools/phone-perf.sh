@@ -15,7 +15,8 @@
 set -u
 SEC="${1:-30}"; CPUS="${2:-auto}"; MODE="${3:-both}"; SELS="${4:-default}"; shift $(( $# < 4 ? $# : 4 ))
 case "$SEC" in ''|*[!0-9]*|0) echo "seconds must be a number"; exit 2;; esac
-case "$MODE" in stat|record|both|full) ;; *) echo "mode must be stat, record, both or full"; exit 2;; esac
+REV=cpu-cycles; case "$MODE" in fullmiss) MODE=full; REV=branch-misses;; esac   # fullmiss: the full listing with branch-miss samples (where mispredicts are detected)
+case "$MODE" in stat|record|both|full) ;; *) echo "mode must be stat, record, both, full or fullmiss"; exit 2;; esac
 case "$CPUS" in auto) ;; *[!0-9,]*|'') echo "cpus must be auto or a list like 0,4"; exit 2;; esac
 case "$SELS" in *[!a-z0-9,]*|'') echo "sels must be a list like default,384,l1"; exit 2;; esac
 ts() { date '+%F %T'; }
@@ -89,8 +90,8 @@ stat_pass() { # title events
 	echo "$out" | grep -iE 'error|fail|not supported|denied' | head -5
 }
 record_pass() {
-	echo "--- where the cycles go ($SEC s, 2000 samples/s)"
-	asroot $((SEC + 60)) "$SP record -e cpu-cycles -f 2000 -p $MP --duration $SEC -o $DATA" 2>&1 | grep -vE '^$' | tail -4
+	echo "--- where the $REV samples are ($SEC s, 2000 samples/s)"
+	asroot $((SEC + 60)) "$SP record -e $REV -f 2000 -p $MP --duration $SEC -o $DATA" 2>&1 | grep -vE '^$' | tail -4
 	echo "by symbol:"
 	asroot 120 "$SP report -i $DATA --sort dso,symbol" 2>&1 | grep -E '%' | sed -n 1,12p | cut -c1-170
 	local hot; hot=$(asroot 120 "$SP report -i $DATA --sort dso,vaddr_in_file" 2>&1 | grep -E '%' | grep ccminer | sed -n "1,$([ "$MODE" = full ] && echo 20000 || echo 80)p")
