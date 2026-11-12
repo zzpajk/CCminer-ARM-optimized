@@ -339,6 +339,12 @@ static int verus_sel_for_cpu(int cpu)
 		 * (7552) is equal (1032) with more code and 5 more mispredicts per hash; on the A53 lean and
 		 * threaded both lose 5-8% to 1152 (set-up after the jump / restore loop), so the A53 keeps 1152. */
 		if (g_impl[cpu] == 0x53 && g_part[cpu] == 0x001) sel |= 2048;
+		/* ... and threaded (4096): each case body ends with its own copy of the case jump. S8 M2, one thread
+		 * (2026-11-12): 3456 1029 kH/s, 2240 cycles, 2140 instructions per hash -> 7552 1042 kH/s, 2211
+		 * cycles, 1962 instructions (8% fewer); sustained all-core in the cold room 6.141 -> 6.173 MH/s.
+		 * Measured and not taken on the M2: three lanes (VERUS_X3=1: -1%, L1D misses 0.5 -> 21 per hash,
+		 * three key copies do not fit), batched restore (bit 18: neutral), 16-bit journal (bit 17: -3.5%). */
+		if (g_impl[cpu] == 0x53 && g_part[cpu] == 0x001) sel |= 4096;
 		/* Qualcomm Kryo Gold cores report implementer 0x51 but are Cortex derivatives: use the path of the
 		 * Cortex core they are built on. NOT measured yet (no such phone tested): 0x800 Kryo 280 Gold (A73,
 		 * SD835), 0x802 Kryo 385 Gold (A75, SD845 / 7xx), 0x804 Kryo 485 Gold (A76, SD855 / 7xx). */
@@ -643,7 +649,11 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 		 * thread, simpleperf 2026-11-11: 55.4 -> 48.1 mispredicts, 2376 -> 2135 instructions, 3322 -> 3076
 		 * cycles per hash, 506.5 -> 547.1 kH/s (+8.0%, two runs each; s128 without fold: 502). Other
 		 * in-order cores (A55 ...) are not measured yet and keep the plain loop. */
-		if (sel1 == -1) { int cpu = sched_getcpu(); if (cpu >= 0 && cpu < 1024 && g_impl[cpu] == 0x41 && g_part[cpu] == 0xd03) use1 = 1152; }
+		if (sel1 == -1) { int cpu = sched_getcpu(); if (cpu >= 0 && cpu < 1024 && g_impl[cpu] == 0x41 && g_part[cpu] == 0xd03) use1 = 263296; }
+		/* 263296 = 1152 + batched key restore (bit 18: four rounds per step, loads before stores). S8 A53, one
+		 * thread, two runs each (2026-11-12): 1152 540.9 / 541.8 kH/s, 263296 542.0 / 543.9. Lean on the A53,
+		 * split: 3200 526, + 16-bit journal 535-539, + batched restore 533, both 540 = the fold level, with
+		 * 100 fewer instructions per hash; nothing beats 1152 + batch by more than noise. */
 #endif
 		if (use1 >= 0) {
 			{ static __thread int logged1 = 0; if (!logged1) { logged1 = 1; applog(LOG_INFO, "Verus thread %d: single-nonce lane code, SEL %d%s", thr_id, use1, use1 >= 1024 ? " (fold)" : ""); } }
