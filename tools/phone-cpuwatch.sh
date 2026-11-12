@@ -22,7 +22,7 @@ case "$MIN" in ''|*[!0-9]*) echo "minutes must be a number"; exit 2;; esac
 MOPTS=()
 for o in "$@"; do
 	case "$o" in
-		VERUS_SEL=*|VERUS_SEL1=*|VERUS_LANES=*|VERUS_PRE1=*)
+		VERUS_SEL=*|VERUS_SEL1=*|VERUS_LANES=*|VERUS_PRE1=*|VERUS_X3=*)
 			case "${o#*=}" in ''|*[!0-9]*) echo "bad value in $o"; exit 2;; esac; export "$o";;
 		*) MOPTS+=("$o");;
 	esac
@@ -72,7 +72,7 @@ if [ -n "$CAPMHZ" ]; then
 	echo "$(ts) fast cores capped at $((CAPF/1000)) MHz:$CAPPED (read back: $(for c in $CAPPED; do printf '%s ' $(( $(cat $C/$c/cpufreq/scaling_max_freq) / 1000 )); done))"
 fi
 LOG="$HOME/verus-runs/cpuwatch-miner.log"
-echo "$(date '+%F %T') variant environment: $(env | grep -E '^VERUS_(SEL|SEL1|LANES|PRE1)=' | tr '\n' ' ')(empty = built-in defaults)"
+echo "$(date '+%F %T') variant environment: $(env | grep -E '^VERUS_(SEL|SEL1|LANES|PRE1|X3)=' | tr '\n' ' ')(empty = built-in defaults)"
 "$BIN" -a verus --benchmark -t "$NCPU" --no-color "$@" > "$LOG" 2>&1 < /dev/null &
 MP=$!
 cleanup() { kill "$MP" 2>/dev/null; wait "$MP" 2>/dev/null
