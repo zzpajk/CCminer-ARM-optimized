@@ -71,6 +71,11 @@ static inline void verus_fixkey_pristine_sel(const uint16_t * __restrict sj16, _
  * (instantiated: 2176 3200; scan values 2432 3456; needs bit 128).
  * bit 12 (4096): threaded dispatch, every case body ends with its own jump to the next case (computed goto,
  * bodies specialised per fold index; needs bit 1024; instantiated: 5248 7296; scan values 5504 7552).
+ * bit 13 (8192): goto, one computed-goto case jump per lane with the whole round set-up in front of it (needs
+ * 128 + 1024 + 2048). Bits 14-15 (16384, 32768) = A, arms: the arm choices of the last A rounds of cases
+ * 0x14 / 0x18 are part of the jump index (2^A copies of their round chains). Bit 16 (65536), dup: lane 0's
+ * cases end with their own copy of lane 1's jump. Instantiated: 11392 27776 44160 76928 93312 109696 (two
+ * lanes), 11392 27776 44160 (one lane); scan values add 256.
  * The default comes from the build flags; x2percore picks it per core at run time. */
 #if defined(VERUS_SEL_FORCE)
 #  define VERUS_SEL_DEFAULT VERUS_SEL_FORCE   /* tests: any instantiated SEL value */

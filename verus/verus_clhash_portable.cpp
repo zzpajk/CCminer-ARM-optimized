@@ -807,14 +807,16 @@ typedef uint64_t __attribute__((may_alias)) verus_u64_alias;
 template<int SEL, int FIXC = -1>
 FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *randomsource,
 		const __m128i *pbuf_copy, uint64_t keyMask, uint16_t * __restrict fixrand,
-		uint16_t * __restrict fixrandex, __m128i *g_prand, __m128i *g_prandex, uint64_t presel = 0)
+		uint16_t * __restrict fixrandex, __m128i *g_prand, __m128i *g_prandex, uint64_t presel = 0,
+		__m128i *xprand = nullptr, __m128i *xprandex = nullptr, const __m128i *xpbuf = nullptr, const __m128i *xpbsf = nullptr)
 {
 	__m128i const *pbuf, *pbsf;
 
 		//std::cout << "LOOP " << i << " acc: " << LEToHex(acc) << std::endl;
 
 		/* threaded dispatch (4096): the caller already moved the selector to a general register for its jump */
-		const uint64_t selector = (SEL & 4096) ? presel : (uint64_t)_mm_cvtsi128_si64_emu(acc);
+		/* goto dispatch (8192): the caller also wrote the journal and computed prand, prandex, pbuf, pbsf */
+		const uint64_t selector = (SEL & (4096 | 8192)) ? presel : (uint64_t)_mm_cvtsi128_si64_emu(acc);
 #ifdef VERUS_STATS
 		verus_dbg_sel[(verus_dbg_n++) & 1][i] = selector;
 #endif
@@ -827,14 +829,15 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 		 *   the positions from it. fixrand must then hold 32 * 8 bytes; fixrandex is not used.
 		 * - pbsf = pbuf -/+ 1 is index (selector & 3) ^ 1 of the same four words
 		 * - with fold, the jump index is two instructions (lsr #58 + bfxil) */
-		if (SEL & 2048) {
+		if (SEL & 8192) {
+		} else if (SEL & 2048) {
 			*(verus_u64_alias *)(fixrand + 4 * i) = selector;
 		} else {
 		fixrand[i]  = (uint16_t) ((selector >> 5) & keyMask);
 		fixrandex[i] = (uint16_t) ((selector >>32) & keyMask);
 		}
-		__m128i *prand = randomsource + ((SEL & 2048) ? ((selector >> 5) & keyMask) : (uint64_t)fixrand[i]);
-		__m128i *prandex = randomsource + ((SEL & 2048) ? ((selector >> 32) & keyMask) : (uint64_t)fixrandex[i]);
+		__m128i *prand = (SEL & 8192) ? xprand : randomsource + ((SEL & 2048) ? ((selector >> 5) & keyMask) : (uint64_t)fixrand[i]);
+		__m128i *prandex = (SEL & 8192) ? xprandex : randomsource + ((SEL & 2048) ? ((selector >> 32) & keyMask) : (uint64_t)fixrandex[i]);
 		if (!(SEL & 128)) {   /* bit 128: no journal, the caller restores from a pristine key copy */
 			g_prand[i] = *prand;
 			g_prandex[i] = *prandex;
@@ -843,8 +846,8 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 
 
 		// select random start and order of pbuf processing
-		pbuf = pbuf_copy + (selector & 3);
-		pbsf = (SEL & 2048) ? pbuf_copy + ((selector & 3) ^ 1) : pbuf - selector_fudge;
+		pbuf = (SEL & 8192) ? xpbuf : pbuf_copy + (selector & 3);
+		pbsf = (SEL & 8192) ? xpbsf : (SEL & 2048) ? pbuf_copy + ((selector & 3) ^ 1) : pbuf - selector_fudge;
 		/* SEL bit 9 (512), "preload": every case starts by reading *prand, *prandex, *pbuf and *pbsf (before
 		 * any store of the round), so they are loaded here, BEFORE the unpredictable case jump. After a
 		 * mispredict the case then starts with its operands ready instead of waiting for the loads. */
@@ -871,7 +874,7 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 		 * equally unpredictable loop exit is gone, and inside a round the selector bit and the buffer word
 		 * are constants. Round r of R reads the key word prand[R - r], as the original rc++ does. */
 /* with bit 4096 (threaded dispatch in verusclhash_port2_2_xN) FIXC >= 0 is a fold index: case | rounds << 3 */
-#define VERUS_FOLD ((SEL & 1024) && (FIXC < 0 || (SEL & 4096)))
+#define VERUS_FOLD ((SEL & 1024) && (FIXC < 0 || (SEL & (4096 | 8192))))
 #define VERUS_CASE(c) (VERUS_FOLD ? (uint64_t)((c) >> 2) : (uint64_t)(c))
 #define VERUS_CASEX(c, r) (VERUS_FOLD ? (uint64_t)(((c) >> 2) | ((r) << 3)) : (uint64_t)(0x1000 + (c) * 8 + (r)))   /* dead labels when not folding */
 #define VERUS_CASEL(c) (VERUS_FOLD ? (uint64_t)(0x2000 + (c)) : (uint64_t)(c))                                 /* dead label when folding */
@@ -1408,6 +1411,142 @@ if (SEL & 2) {
 #undef VPRE_S
 /* N independent nonces in lockstep (N = 2..4), each lane with its own key. Round code is the same as the
  * single-nonce loop; only the order of execution differs. */
+#if defined(__GNUC__)
+/* SEL bit 13 (8192), "goto": the case jump of each lane is ONE computed goto through a table of label addresses
+ * (ldr + br: no adr/add, one step less between the selector and the jump than the compiler's switch table).
+ * The whole round set-up (journal store, prand, prandex, pbuf, pbsf) stays in front of the jump. Needs fold
+ * (1024), lean (2048) and the pristine restore (128).
+ * SEL bits 14-15 (16384, 32768) = A, "arms": the arm choices of the LAST A rounds of cases 0x14 / 0x18 (rounds
+ * 0 .. A-1 test the fixed selector bits 28 .. 28+A-1) are part of the jump index too. The case jump mispredicts
+ * anyway; with A arms known at the jump, those 50/50 arm branches are gone. The round chain of the two cases
+ * exists 2^A times (one copy per arm combination; rounds >= A keep their branch), the tables hold 2^A x 64
+ * addresses per lane.
+ * One jump site per lane: the empty asm goto in front of 'goto vgb_disp' keeps the compiler from copying the
+ * jump block to the end of every lane-0 case. SEL bit 16 (65536), "dup", leaves that copying to the compiler
+ * (lane 0's cases then end with their own jump for lane 1, no branch back to a shared block).
+ * Cases 0x14 / 0x18 here: prand itself walks over the key words of the rounds (round r of an entry at R reads
+ * prand[R - r], as the original rc++ does); the last step recomputes the original prand from the selector. */
+#if defined(__aarch64__)
+#define VERUS_GT_LOAD(tgt, row, fi) __asm__("ldr %0, [%1, %2, lsl #3]" : "=r"(tgt) : "r"(row), "r"(fi))
+#else
+#define VERUS_GT_LOAD(tgt, row, fi) tgt = (row)[fi]
+#endif
+/* The jump block of a lane: 11 instructions (13 with arms); between the selector and the jump: fmov, lsr,
+ * bfxil, ldr, br. The empty asm statements pin values to registers at this point: the accumulator (so this
+ * lane's set-up is not hoisted into the other lane's block), the prandex pointer (otherwise every case starts
+ * with a shift of the index). The table load is written out because the compiler splits it into add + ldr. */
+#define VERUS_GT_DISP(TAB, l, AM) { \
+	__asm__("" : "+w"(ac[l])); \
+	selv = (uint64_t)_mm_cvtsi128_si64_emu(ac[l]); \
+	*(verus_u64_alias *)((char *)frl[l] + i8) = selv; \
+	prand = rsl[l] + ((selv >> 5) & keyMask); prandex = rsl[l] + ((selv >> 32) & keyMask); \
+	__asm__("" : "+r"(prandex)); \
+	pbi = selv & 3; psi = pbi ^ 1; \
+	const void *const *row = (AM) ? (TAB) + (((selv >> 28) & (AM)) << 6) : (TAB); \
+	const uint64_t fi = verus_fold_index(selv); const void *tgt; \
+	VERUS_GT_LOAD(tgt, row, fi); \
+	goto *tgt; }
+#define VERUS_GT_SIMPLE(P, l, k, AFTER) P##c##k: \
+	verus_round_port2_2<SEL, k>(ac[l], 0, rsl[l], pcb[l], keyMask, nullptr, nullptr, nullptr, nullptr, selv, prand, prandex, pcb[l] + pbi, pcb[l] + psi); AFTER
+#define VERUS_GT_BIT(A, a, r) ((r) < (A) ? ((((a) >> (r)) & 1) != 0) : (VERUS_ABL_INNER(selv, r) != 0))
+#define VERUS_GT_R14(P, l, A, a, r) P##f14_##a##_##r: { \
+	__m128i onekey = _mm_load_si128_emu(prand); \
+	const __m128i *rc = ++prand; __m128i tmp; \
+	if (VERUS_GT_BIT(A, a, r)) { \
+		const __m128i temp2 = _mm_load_si128_emu((r) & 1 ? pcb[l] + pbi : pcb[l] + psi); \
+		const __m128i add1 = _mm_xor_si128_emu(onekey, temp2); \
+		const __m128i clprod1 = _mm_clmulepi64_si128_emu(add1, add1, 0x10); \
+		ac[l] = _mm_xor_si128_emu(clprod1, ac[l]); \
+	} else { \
+		__m128i temp2 = _mm_load_si128_emu((r) & 1 ? pcb[l] + psi : pcb[l] + pbi); \
+		const uint64_t roundidx = f_aes++ << 2; \
+		AES2(onekey, temp2, roundidx); \
+		MIX2_EMU(onekey, temp2); \
+		ac[l] = _mm_xor_si128_emu(ac[l], _mm_xor_si128_emu(onekey, temp2)); \
+	} (void)rc; (void)tmp; }
+#define VERUS_GT_R18(P, l, A, a, r) P##f18_##a##_##r: { \
+	__m128i onekey = _mm_load_si128_emu(prand); prand++; \
+	if (VERUS_GT_BIT(A, a, r)) { \
+		const __m128i temp2 = _mm_load_si128_emu((r) & 1 ? pcb[l] + pbi : pcb[l] + psi); \
+		onekey = _mm_xor_si128_emu(onekey, temp2); \
+		const int32_t divisor = (uint32_t)selv; \
+		const int64_t dividend = _mm_cvtsi128_si64(onekey); \
+		const __m128i modulo = _mm_cvtsi32_si128(VERUS_ABL_MOD(dividend, divisor)); \
+		ac[l] = _mm_xor_si128_emu(modulo, ac[l]); \
+	} else { \
+		const __m128i temp4 = _mm_load_si128_emu((r) & 1 ? pcb[l] + psi : pcb[l] + pbi); \
+		const __m128i add1 = _mm_xor_si128_emu(onekey, temp4); \
+		onekey = _mm_clmulepi64_si128_emu(add1, add1, 0x10); \
+		const __m128i clprod2 = _mm_mulhrs_epi16_emu(ac[l], onekey); \
+		ac[l] = _mm_xor_si128_emu(clprod2, ac[l]); \
+	} f_ok = onekey; }
+#define VERUS_GT_COPY(P, l, A, a, AFTER) \
+	VERUS_GT_R14(P, l, A, a, 7) VERUS_GT_R14(P, l, A, a, 6) VERUS_GT_R14(P, l, A, a, 5) VERUS_GT_R14(P, l, A, a, 4) \
+	VERUS_GT_R14(P, l, A, a, 3) VERUS_GT_R14(P, l, A, a, 2) VERUS_GT_R14(P, l, A, a, 1) VERUS_GT_R14(P, l, A, a, 0) \
+	{ __m128i *p0 = rsl[l] + ((selv >> 5) & keyMask); \
+	  const __m128i tempa1 = _mm_load_si128_emu(p0); \
+	  const __m128i tempa2 = _mm_mulhrs_epi16_emu(ac[l], tempa1); \
+	  *p0 = _mm_load_si128_emu(prandex); \
+	  *prandex = _mm_xor_si128_emu(tempa1, tempa2); \
+	  f_aes = 0; } AFTER \
+	VERUS_GT_R18(P, l, A, a, 7) VERUS_GT_R18(P, l, A, a, 6) VERUS_GT_R18(P, l, A, a, 5) VERUS_GT_R18(P, l, A, a, 4) \
+	VERUS_GT_R18(P, l, A, a, 3) VERUS_GT_R18(P, l, A, a, 2) VERUS_GT_R18(P, l, A, a, 1) VERUS_GT_R18(P, l, A, a, 0) \
+	{ __m128i *p0 = rsl[l] + ((selv >> 5) & keyMask); \
+	  *p0 = _mm_xor_si128_emu(_mm_load_si128_emu(prandex), ac[l]); \
+	  _mm_store_si128_emu(prandex, f_ok); } AFTER
+#define VERUS_GT_COPIES_0(P, l, A, AFTER) VERUS_GT_COPY(P, l, A, 0, AFTER)
+#define VERUS_GT_COPIES_1(P, l, A, AFTER) VERUS_GT_COPY(P, l, A, 0, AFTER) VERUS_GT_COPY(P, l, A, 1, AFTER)
+#define VERUS_GT_COPIES_2(P, l, A, AFTER) VERUS_GT_COPY(P, l, A, 0, AFTER) VERUS_GT_COPY(P, l, A, 1, AFTER) \
+	VERUS_GT_COPY(P, l, A, 2, AFTER) VERUS_GT_COPY(P, l, A, 3, AFTER)
+#define VERUS_GT_LANE(P, l, A, AFTER) \
+	VERUS_GT_SIMPLE(P, l, 0, AFTER) VERUS_GT_SIMPLE(P, l, 1, AFTER) VERUS_GT_SIMPLE(P, l, 2, AFTER) \
+	VERUS_GT_SIMPLE(P, l, 3, AFTER) VERUS_GT_SIMPLE(P, l, 4, AFTER) VERUS_GT_SIMPLE(P, l, 7, AFTER) \
+	VERUS_GT_COPIES_##A(P, l, A, AFTER)
+/* table row r: jump indices r*8 .. r*8+7 = the eight cases with (selector >> 61) == r */
+#define VERUS_GT_ROW(P, a, r) &&P##c0, &&P##c1, &&P##c2, &&P##c3, &&P##c4, &&P##f14_##a##_##r, &&P##f18_##a##_##r, &&P##c7
+#define VERUS_GT_TAB(P, a) { VERUS_GT_ROW(P, a, 0), VERUS_GT_ROW(P, a, 1), VERUS_GT_ROW(P, a, 2), VERUS_GT_ROW(P, a, 3), \
+	VERUS_GT_ROW(P, a, 4), VERUS_GT_ROW(P, a, 5), VERUS_GT_ROW(P, a, 6), VERUS_GT_ROW(P, a, 7) }
+#define VERUS_GT_TABS_0(P) VERUS_GT_TAB(P, 0)
+#define VERUS_GT_TABS_1(P) VERUS_GT_TAB(P, 0), VERUS_GT_TAB(P, 1)
+#define VERUS_GT_TABS_2(P) VERUS_GT_TAB(P, 0), VERUS_GT_TAB(P, 1), VERUS_GT_TAB(P, 2), VERUS_GT_TAB(P, 3)
+#define VERUS_GOTO_FUNC(NAME, A) \
+template<int N, int SEL> \
+static __attribute__((noinline)) void NAME(__m128i *acc, __m128i *const *rs, const __m128i (*pc)[4], uint16_t *const *fr, uint64_t keyMask) \
+{ \
+	static const void *const tab_a[1 << (A)][64] = { VERUS_GT_TABS_##A(vga_) }; \
+	static const void *const tab_b[1 << (A)][64] = { VERUS_GT_TABS_##A(vgb_) }; \
+	uint64_t i8 = 0, selv = 0, f_aes = 0, pbi = 0, psi = 0;   /* i8: round number x 8 (journal offset) */ \
+	__m128i *prand = nullptr, *prandex = nullptr; \
+	__m128i ac[2] = { acc[0], acc[N - 1] }; \
+	__m128i f_ok = ac[0]; \
+	__m128i *rsl[2] = { rs[0], rs[N - 1] }; \
+	uint16_t *frl[2] = { fr[0], fr[N - 1] }; \
+	const __m128i *pcb[2] = { pc[0], pc[N - 1] }; \
+	__asm__("" : "+r"(pcb[0])); __asm__("" : "+r"(pcb[1])); \
+	const void *const *ta = &tab_a[0][0]; const void *const *tb = &tab_b[0][0];   /* table addresses in registers */ \
+	__asm__("" : "+r"(ta)); __asm__("" : "+r"(tb)); \
+	goto vga_disp; \
+	vga_disp: VERUS_GT_DISP(ta, 0, (1 << (A)) - 1) \
+	vgb_disp: VERUS_GT_DISP(tb, N - 1, (1 << (A)) - 1) \
+	VERUS_GT_LANE(vga_, 0, A, { if (N == 2) { if (!(SEL & 65536)) __asm__ goto("" : : : : vgb_disp); goto vgb_disp; } if ((i8 += 8) == 256) goto vg_done; goto vga_disp; }) \
+	VERUS_GT_LANE(vgb_, N - 1, A, { if ((i8 += 8) == 256) goto vg_done; goto vga_disp; }) \
+	vg_done: acc[0] = ac[0]; if (N == 2) acc[N - 1] = ac[N - 1]; \
+}
+VERUS_GOTO_FUNC(verus_goto_a0, 0)
+VERUS_GOTO_FUNC(verus_goto_a1, 1)
+VERUS_GOTO_FUNC(verus_goto_a2, 2)
+/* only the (N, SEL) pairs that ask for it instantiate a goto function (A = -1: not this variant) */
+template<int N, int SEL, int A> struct verus_goto_sel {
+	FORCE_INLINE void run(__m128i *, __m128i *const *, const __m128i (*)[4], uint16_t *const *, uint64_t) {} };
+template<int N, int SEL> struct verus_goto_sel<N, SEL, 0> {
+	FORCE_INLINE void run(__m128i *acc, __m128i *const *rs, const __m128i (*pc)[4], uint16_t *const *fr, uint64_t keyMask) { verus_goto_a0<N, SEL>(acc, rs, pc, fr, keyMask); } };
+template<int N, int SEL> struct verus_goto_sel<N, SEL, 1> {
+	FORCE_INLINE void run(__m128i *acc, __m128i *const *rs, const __m128i (*pc)[4], uint16_t *const *fr, uint64_t keyMask) { verus_goto_a1<N, SEL>(acc, rs, pc, fr, keyMask); } };
+template<int N, int SEL> struct verus_goto_sel<N, SEL, 2> {
+	FORCE_INLINE void run(__m128i *acc, __m128i *const *rs, const __m128i (*pc)[4], uint16_t *const *fr, uint64_t keyMask) { verus_goto_a2<N, SEL>(acc, rs, pc, fr, keyMask); } };
+#endif
+
+
 template<int N, int SEL>
 void verusclhash_port2_2_xN(void **random, const unsigned char **buf, uint64_t keyMask,
 		uint16_t **fixrand_in, uint16_t **fixrandex_in, __m128i **g_prand_in, __m128i **g_prandex_in, uint64_t *out)
@@ -1428,6 +1567,9 @@ void verusclhash_port2_2_xN(void **random, const unsigned char **buf, uint64_t k
 		acc[l] = _mm_load_si128_emu(rs[l] + (keyMask + 2));
 	}
 #if defined(__GNUC__)
+	if ((N == 1 || N == 2) && (SEL & 8192)) {
+		verus_goto_sel<N, SEL, ((N == 1 || N == 2) && (SEL & 8192)) ? ((SEL >> 14) & 3) : -1>::run(acc, rs, pc, (uint16_t *const *)fr, keyMask);
+	} else
 	if ((N == 1 || N == 2) && (SEL & 4096)) {
 		/* SEL bit 12 (4096), "threaded": needs fold (1024). Every case body ends with its own copy of the
 		 * next lane's case jump (computed goto through a table of label addresses: ldr + br, no adr/add,
@@ -1571,6 +1713,12 @@ template void verusclhash_port2_2_xN<2, 3200>(void **, const unsigned char **, u
 template void verusclhash_port2_2_xN<2, 2176>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<2, 7296>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<2, 5248>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 11392>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 27776>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 44160>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 76928>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 93312>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 109696>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<2, 512>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<2, 515>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<2, 547>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
@@ -1592,6 +1740,9 @@ template void verusclhash_port2_2_xN<1, 3200>(void **, const unsigned char **, u
 template void verusclhash_port2_2_xN<1, 2176>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<1, 7296>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<1, 5248>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<1, 11392>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<1, 27776>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<1, 44160>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<1, 640>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<1, 672>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<3, 0>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
