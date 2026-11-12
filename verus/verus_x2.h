@@ -47,7 +47,7 @@ static inline void verus_fixkey_lane(const struct verus_lane *l)
 template<int N, int SEL = VERUS_SEL_DEFAULT>
 static inline void Verus2hash_xN(unsigned char *const *hash, struct verus_lane *L, const unsigned char *const *nonce)
 {
-	constexpr int CS = SEL & ~256;   /* bits that matter to the clhash rounds */
+	constexpr int CS = SEL & ~(256 | 262144);   /* bits that matter to the clhash rounds */
 	void *rs[N]; const unsigned char *bf[N]; uint16_t *fr[N], *fre[N]; __m128i *gp[N], *gpx[N]; uint64_t im[N];
 	for (int l = 0; l < N; l++) {
 		unsigned char *b = L[l].buf;
@@ -69,14 +69,22 @@ static inline void Verus2hash_xN(unsigned char *const *hash, struct verus_lane *
 #ifndef VERUS_ABL_NOHARAKA
 	if (N == 2 && (SEL & 256))
 		haraka512_keyed_x2(hash[0], L[0].buf, L[0].key + (im[0] & 511), hash[N - 1], L[N - 1].buf, L[N - 1].key + (im[N - 1] & 511));
-	else
+	else if (N == 3 && (SEL & 256)) {
+		haraka512_keyed_x2(hash[0], L[0].buf, L[0].key + (im[0] & 511), hash[1], L[1].buf, L[1].key + (im[1] & 511));
+		haraka512_keyed(hash[N - 1], L[N - 1].buf, L[N - 1].key + (im[N - 1] & 511));
+	} else
 		for (int l = 0; l < N; l++) haraka512_keyed(hash[l], L[l].buf, L[l].key + (im[l] & 511));
 #else
 	for (int l = 0; l < N; l++) hash[l][28] = (unsigned char)im[l];   /* timing experiment only (tests/verus_ablate.cpp) */
 #endif
 #ifndef VERUS_ABL_NOFIX
-	if ((SEL & 128) && (SEL & 2048))
+	constexpr bool SJ = (SEL & 128) && (SEL & 2048) && !(SEL & 131072);   /* selector journal */
+	if (SJ && (SEL & 262144))
+		for (int l = 0; l < N; l++) verus_fixkey_pristine_sel_b4(L[l].fixrand, L[l].key, L[l].pristine);
+	else if (SJ)
 		for (int l = 0; l < N; l++) verus_fixkey_pristine_sel(L[l].fixrand, L[l].key, L[l].pristine);
+	else if ((SEL & 128) && (SEL & 262144))
+		for (int l = 0; l < N; l++) verus_fixkey_pristine_b4(L[l].fixrand, L[l].fixrandex, L[l].key, L[l].pristine);
 	else if (SEL & 128)
 		for (int l = 0; l < N; l++) verus_fixkey_pristine(L[l].fixrand, L[l].fixrandex, L[l].key, L[l].pristine);
 	else

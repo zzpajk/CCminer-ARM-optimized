@@ -35,6 +35,41 @@ static inline void verus_fixkey_pristine(const uint16_t * __restrict fixrand, co
 	}
 }
 
+/* SEL bit 18 (262144), "batch": the same restores with four rounds per step, all index loads first, then all
+ * eight key loads, then all eight stores. One round at a time is a chain index load -> key load -> store,
+ * which an in-order core (Cortex-A53) waits through 32 times per hash. Every store writes the pristine value
+ * of its own position, so the order does not matter (also when positions repeat). */
+static inline void verus_fixkey_pristine_b4(const uint16_t * __restrict fixrand, const uint16_t * __restrict fixrandex,
+		__m128i * __restrict key, const __m128i * __restrict pristine)
+{
+	typedef uint64_t __attribute__((may_alias)) u64a;
+	const u64a *fa = (const u64a *)fixrand, *fb = (const u64a *)fixrandex;
+	for (int i = 0; i < 8; i++) {
+		const uint64_t a = fa[i], b = fb[i];
+		const uint64_t p0 = a & 0xffff, p1 = (a >> 16) & 0xffff, p2 = (a >> 32) & 0xffff, p3 = a >> 48;
+		const uint64_t q0 = b & 0xffff, q1 = (b >> 16) & 0xffff, q2 = (b >> 32) & 0xffff, q3 = b >> 48;
+		const __m128i v0 = pristine[p0], v1 = pristine[q0], v2 = pristine[p1], v3 = pristine[q1];
+		const __m128i v4 = pristine[p2], v5 = pristine[q2], v6 = pristine[p3], v7 = pristine[q3];
+		key[p0] = v0; key[q0] = v1; key[p1] = v2; key[q1] = v3;
+		key[p2] = v4; key[q2] = v5; key[p3] = v6; key[q3] = v7;
+	}
+}
+
+static inline void verus_fixkey_pristine_sel_b4(const uint16_t * __restrict sj16, __m128i * __restrict key, const __m128i * __restrict pristine)
+{
+	typedef uint64_t __attribute__((may_alias)) u64a;
+	const u64a *sj = (const u64a *)sj16;
+	for (int i = 0; i < 32; i += 4) {
+		const uint64_t s0 = sj[i], s1 = sj[i + 1], s2 = sj[i + 2], s3 = sj[i + 3];
+		const uint64_t a0 = (s0 >> 5) & 511, b0 = (s0 >> 32) & 511, a1 = (s1 >> 5) & 511, b1 = (s1 >> 32) & 511;
+		const uint64_t a2 = (s2 >> 5) & 511, b2 = (s2 >> 32) & 511, a3 = (s3 >> 5) & 511, b3 = (s3 >> 32) & 511;
+		const __m128i v0 = pristine[a0], v1 = pristine[b0], v2 = pristine[a1], v3 = pristine[b1];
+		const __m128i v4 = pristine[a2], v5 = pristine[b2], v6 = pristine[a3], v7 = pristine[b3];
+		key[a0] = v0; key[b0] = v1; key[a1] = v2; key[b1] = v3;
+		key[a2] = v4; key[b2] = v5; key[a3] = v6; key[b3] = v7;
+	}
+}
+
 /* SEL bit 11 (2048): the journal is the round's 64-bit selector (32 of them at sj); the two key positions of
  * a round are its bits 5..13 and 32..40 (keyMask 511). */
 static inline void verus_fixkey_pristine_sel(const uint16_t * __restrict sj16, __m128i * __restrict key, const __m128i * __restrict pristine)
@@ -69,6 +104,9 @@ static inline void verus_fixkey_pristine_sel(const uint16_t * __restrict sj16, _
  * unrolled rounds at the right place (instantiated: 1152 1155 1187; scan values 1408 1411 1443).
  * bit 11 (2048): lean, selector journal (fixrand must hold 256 bytes) + shorter code in front of the case jump
  * (instantiated: 2176 3200; scan values 2432 3456; needs bit 128).
+ * bit 17 (131072): j16, with lean: the old 16-bit journal (fixrand / fixrandex) instead of the selector journal.
+ * bit 18 (262144): batch, key restore four rounds per step (verus_fixkey_pristine_b4 / _sel_b4); not a clhash bit.
+ * Three lanes (VERUS_X3=1 at run time, Mongoose M1/M2 with 3456 or 265600): verusclhash_port2_2_xN<3, 3200>.
  * bit 12 (4096): threaded dispatch, every case body ends with its own jump to the next case (computed goto,
  * bodies specialised per fold index; needs bit 1024; instantiated: 5248 7296; scan values 5504 7552).
  * bit 13 (8192): goto, one computed-goto case jump per lane with the whole round set-up in front of it (needs
