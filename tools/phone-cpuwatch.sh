@@ -9,6 +9,8 @@
 # "widen" (default) first sets the foreground cpuset to all CPUs ONCE (root) and restores it at the end.
 # MODE may be "widen,cap1794" / "nowiden,cap1794": also cap the fast cores' clock (root; restored at the end).
 # Extra miner options (e.g. --cpu-priority 1) are passed through. Refuses to run while another ccminer runs.
+# Options of the form VERUS_NAME=value (VERUS_SEL, VERUS_SEL1, VERUS_LANES, VERUS_PRE1) are set in the miner's
+# environment instead (variant comparisons with one binary).
 set -u
 MIN="${1:-120}"; MODE="${2:-widen}"; CAPMHZ=""
 # MODE may carry ",capNNNN": cap the fast cores (all CPUs above the slowest cluster) at NNNN MHz (root)
@@ -17,6 +19,15 @@ case "$CAPMHZ" in *[!0-9]*) echo "bad cap value $CAPMHZ"; exit 2;; esac
  STS="${3:-300}"; shift $(( $# < 3 ? $# : 3 ))
 case "$STS" in ''|*[!0-9]*|0) STS=300;; esac
 case "$MIN" in ''|*[!0-9]*) echo "minutes must be a number"; exit 2;; esac
+MOPTS=()
+for o in "$@"; do
+	case "$o" in
+		VERUS_SEL=*|VERUS_SEL1=*|VERUS_LANES=*|VERUS_PRE1=*)
+			case "${o#*=}" in ''|*[!0-9]*) echo "bad value in $o"; exit 2;; esac; export "$o";;
+		*) MOPTS+=("$o");;
+	esac
+done
+set -- ${MOPTS[@]+"${MOPTS[@]}"}
 F=/dev/cpuset/foreground/cpus
 SU=""
 for s in /system/bin/su /system/xbin/su /sbin/su /debug_ramdisk/su /data/adb/magisk/su; do [ -x "$s" ] && { SU=$s; break; }; done
@@ -61,6 +72,7 @@ if [ -n "$CAPMHZ" ]; then
 	echo "$(ts) fast cores capped at $((CAPF/1000)) MHz:$CAPPED (read back: $(for c in $CAPPED; do printf '%s ' $(( $(cat $C/$c/cpufreq/scaling_max_freq) / 1000 )); done))"
 fi
 LOG="$HOME/verus-runs/cpuwatch-miner.log"
+echo "$(date '+%F %T') variant environment: $(env | grep -E '^VERUS_(SEL|SEL1|LANES|PRE1)=' | tr '\n' ' ')(empty = built-in defaults)"
 "$BIN" -a verus --benchmark -t "$NCPU" --no-color "$@" > "$LOG" 2>&1 < /dev/null &
 MP=$!
 cleanup() { kill "$MP" 2>/dev/null; wait "$MP" 2>/dev/null
@@ -97,3 +109,4 @@ done
 echo "$(ts) done: $samples samples, $changes changes, miner had fewer than all CPUs in $narrow samples ($(( narrow * 100 / (samples ? samples : 1) ))%)"
 echo "$(ts) average hashrate after the first 5 min: $(awk -v s="$sum" -v k="$cnt" 'BEGIN {if (k > 0) printf "%.1f kH/s over %d status lines", s / k, k; else print "n/a"}')"
 echo "$(ts) miner hashrate lines (first/last):"; grep -E 'Total:' "$LOG" | sed -n '1p;$p'
+echo "$(ts) variant per thread:"; grep -oE 'Verus thread [0-9]+.*' "$LOG" | sort -t' ' -k3,3n | uniq | head -16
