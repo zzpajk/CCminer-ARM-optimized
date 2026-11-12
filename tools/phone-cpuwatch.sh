@@ -10,7 +10,8 @@
 # MODE may be "widen,cap1794" / "nowiden,cap1794": also cap the fast cores' clock (root; restored at the end).
 # Extra miner options (e.g. --cpu-priority 1) are passed through. Refuses to run while another ccminer runs.
 # Options of the form VERUS_NAME=value (VERUS_SEL, VERUS_SEL1, VERUS_LANES, VERUS_PRE1) are set in the miner's
-# environment instead (variant comparisons with one binary).
+# environment instead (variant comparisons with one binary). Option bin=NAME runs ccminer-NAME from the newest
+# bench build (~/verus-runs/work-bench-*/bin/, e.g. bin=baseline = the unmodified miner) instead of ~/ccminer.
 set -u
 MIN="${1:-120}"; MODE="${2:-widen}"; CAPMHZ=""
 # MODE may carry ",capNNNN": cap the fast cores (all CPUs above the slowest cluster) at NNNN MHz (root)
@@ -19,11 +20,12 @@ case "$CAPMHZ" in *[!0-9]*) echo "bad cap value $CAPMHZ"; exit 2;; esac
  STS="${3:-300}"; shift $(( $# < 3 ? $# : 3 ))
 case "$STS" in ''|*[!0-9]*|0) STS=300;; esac
 case "$MIN" in ''|*[!0-9]*) echo "minutes must be a number"; exit 2;; esac
-MOPTS=()
+MOPTS=(); WANTBIN=""
 for o in "$@"; do
 	case "$o" in
 		VERUS_SEL=*|VERUS_SEL1=*|VERUS_LANES=*|VERUS_PRE1=*|VERUS_X3=*)
 			case "${o#*=}" in ''|*[!0-9]*) echo "bad value in $o"; exit 2;; esac; export "$o";;
+		bin=*) case "${o#bin=}" in ''|*[!a-z0-9-]*) echo "bad binary name in $o"; exit 2;; esac; WANTBIN="${o#bin=}";;
 		*) MOPTS+=("$o");;
 	esac
 done
@@ -34,7 +36,12 @@ for s in /system/bin/su /system/xbin/su /sbin/su /debug_ramdisk/su /data/adb/mag
 for p in /proc/[0-9]*; do
 	case "$(cat "$p/comm" 2>/dev/null)" in ccminer*) echo "another ccminer is running (pid ${p#/proc/}: $(tr '\0' ' ' < "$p/cmdline" | cut -c1-80)); stop it first"; exit 1;; esac
 done
-BIN=""; [ -x "$HOME/ccminer/ccminer-verus" ] && BIN="$HOME/ccminer/ccminer-verus"
+BIN=""
+if [ -n "$WANTBIN" ]; then
+	BIN=$(ls -t "$HOME"/verus-runs/work-bench-*/bin/ccminer-"$WANTBIN" 2>/dev/null | head -1)
+	[ -x "${BIN:-}" ] || { echo "no bench build ccminer-$WANTBIN found under ~/verus-runs (run a bench job with -v $WANTBIN)"; exit 1; }
+fi
+[ -n "$BIN" ] || { [ -x "$HOME/ccminer/ccminer-verus" ] && BIN="$HOME/ccminer/ccminer-verus"; }
 [ -n "$BIN" ] || BIN=$(ls -t "$HOME"/verus-runs/work-bench-*/bin/ccminer-x2percorep-jt4 2>/dev/null | head -1)
 [ -n "$BIN" ] || BIN=$(ls -t "$HOME"/verus-runs/work-bench-*/bin/ccminer-x2percorep 2>/dev/null | head -1)
 [ -x "${BIN:-}" ] || { echo "no benchmark binary found under ~/verus-runs (run a bench job first)"; exit 1; }
