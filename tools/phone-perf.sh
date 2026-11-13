@@ -134,7 +134,7 @@ for cpu in $(echo "$CPUS" | tr ',' ' '); do
 	echo "$ALLOWED" | grep -qx "$cpu" || { echo "$(ts) cpu$cpu is not in the allowed set, skipped"; continue; }
 	for sel in $(echo "$SELS" | tr ',' ' '); do
 		LOG="$TMPD/miner-cpu$cpu-$sel.log"
-		( unset VERUS_SEL VERUS_LANES VERUS_SEL1 VERUS_PRE1 VERUS_X3
+		( unset VERUS_SEL VERUS_LANES VERUS_SEL1 VERUS_PRE1 VERUS_X3 VERUS_SELMAP
 		  case "$sel" in default) ;; l1) export VERUS_LANES=1;; s[0-9]*) export VERUS_SEL1="${sel#s}";; x3*) export VERUS_X3=1 VERUS_SEL="${sel#x3}";; *) export VERUS_SEL="$sel";; esac
 		  exec "$BIN" -a verus --benchmark -t 1 --cpu-affinity "$(printf '0x%x' $((1 << cpu)))" --no-color "$@" ) > "$LOG" 2>&1 < /dev/null &
 		MP=$!

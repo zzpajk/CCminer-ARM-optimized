@@ -310,6 +310,42 @@ static void verus_scan_cpuinfo()
  * overrides the choice for all out-of-order cores (for testing); VERUS_SEL=7 adds the fully branch-free
  * case 0x14 (x2sel3). Bit 16 (light merge of cases 0/4/8/0x1c) and bit 32 (branch-free case 0x0c) are
  * selectable for testing: VERUS_SEL=16, 32, 48 (on top of x2) or 19, 35, 51 (on top of sel2). */
+/* the VERUS_SEL values the dispatch switch in verus_scan_lanes' caller knows */
+static inline bool verus_sel_ok(long x)
+{
+	return x == 0 || x == 1 || x == 2 || x == 3 || x == 4 || x == 5 || x == 7 || x == 8 || x == 9 || x == 11 || x == 16 || x == 32 || x == 48 || x == 19 || x == 35 || x == 51 || x == 64 || x == 67 || x == 99 || x == 39 || x == 128 || x == 131 || x == 163 || x == 227 || x == 256 || x == 259 || x == 291 || x == 355 || x == 384 || x == 387 || x == 419 || x == 483 || x == 512 || x == 515 || x == 547 || x == 640 || x == 643 || x == 675 || x == 768 || x == 771 || x == 803 || x == 896 || x == 899 || x == 931 || x == 1408 || x == 1411 || x == 1443 || x == 2432 || x == 3456 || x == 5504 || x == 7552 || x == 11648 || x == 28032 || x == 44416 || x == 77184 || x == 93568 || x == 109952 || x == 265600 || x == 134528 || x == 396672;
+}
+
+#ifdef VERUS_PERCORE
+/* testing aid: VERUS_SELMAP="impl:part=N,..." (hex implementer and part as in /proc/cpuinfo, N a VERUS_SEL
+ * value) sets the SEL of one core type, e.g. VERUS_SELMAP=41:d0a=1443,53:003=3456 on the Exynos 9820
+ * (Cortex-A75 and Mongoose M4). An entry for the core's type wins over VERUS_SEL. Unknown values are ignored. */
+struct verus_selmap_t { int n, impl[16], part[16], val[16]; };
+static verus_selmap_t verus_selmap_parse()
+{
+	verus_selmap_t m; m.n = 0;
+	const char *e = getenv("VERUS_SELMAP");
+	while (e && *e && m.n < 16) {
+		char *end; long a = strtol(e, &end, 16);
+		if (*end != ':') break;
+		long b = strtol(end + 1, &end, 16);
+		if (*end != '=') break;
+		long v = strtol(end + 1, &end, 10);
+		if (verus_sel_ok(v)) { m.impl[m.n] = (int)a; m.part[m.n] = (int)b; m.val[m.n] = (int)v; m.n++; }
+		if (*end != ',') break;
+		e = end + 1;
+	}
+	return m;
+}
+static int verus_selmap(int cpu)
+{
+	static const verus_selmap_t m = verus_selmap_parse();   /* C++11: initialised once, thread-safe */
+	for (int k = 0; k < m.n; k++)
+		if (g_impl[cpu] == m.impl[k] && g_part[cpu] == m.part[k]) return m.val[k];
+	return -1;
+}
+#endif
+
 static int verus_sel_for_cpu(int cpu)
 {
 	int sel = VERUS_SEL_DEFAULT;
@@ -359,8 +395,9 @@ static int verus_sel_for_cpu(int cpu)
 #endif
 	static int env = -2;
 	if (env == -2) { const char *e = getenv("VERUS_SEL"); env = -1;
-		if (e && e[0]) { char *end; long x = strtol(e, &end, 10); if (!*end && (x == 0 || x == 1 || x == 2 || x == 3 || x == 4 || x == 5 || x == 7 || x == 8 || x == 9 || x == 11 || x == 16 || x == 32 || x == 48 || x == 19 || x == 35 || x == 51 || x == 64 || x == 67 || x == 99 || x == 39 || x == 128 || x == 131 || x == 163 || x == 227 || x == 256 || x == 259 || x == 291 || x == 355 || x == 384 || x == 387 || x == 419 || x == 483 || x == 512 || x == 515 || x == 547 || x == 640 || x == 643 || x == 675 || x == 768 || x == 771 || x == 803 || x == 896 || x == 899 || x == 931 || x == 1408 || x == 1411 || x == 1443 || x == 2432 || x == 3456 || x == 5504 || x == 7552 || x == 11648 || x == 28032 || x == 44416 || x == 77184 || x == 93568 || x == 109952 || x == 265600 || x == 134528 || x == 396672)) env = (int)x; } }
+		if (e && e[0]) { char *end; long x = strtol(e, &end, 10); if (!*end && verus_sel_ok(x)) env = (int)x; } }
 	if (env >= 0) sel = env;
+	if (cpu >= 0 && cpu < 1024) { const int m = verus_selmap(cpu); if (m >= 0) sel = m; }
 #ifndef VERUS_PRISTINE
 	sel &= ~128;   /* the journal-free two-nonce restore needs the pristine key copy */
 #endif
