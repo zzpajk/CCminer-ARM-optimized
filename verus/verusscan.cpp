@@ -313,7 +313,7 @@ static void verus_scan_cpuinfo()
 /* the VERUS_SEL values the dispatch switch in verus_scan_lanes' caller knows */
 static inline bool verus_sel_ok(long x)
 {
-	return x == 2467 || x == 3491 || x == 0 || x == 1 || x == 2 || x == 3 || x == 4 || x == 5 || x == 7 || x == 8 || x == 9 || x == 11 || x == 16 || x == 32 || x == 48 || x == 19 || x == 35 || x == 51 || x == 64 || x == 67 || x == 99 || x == 39 || x == 128 || x == 131 || x == 163 || x == 227 || x == 256 || x == 259 || x == 291 || x == 355 || x == 384 || x == 387 || x == 419 || x == 483 || x == 512 || x == 515 || x == 547 || x == 640 || x == 643 || x == 675 || x == 768 || x == 771 || x == 803 || x == 896 || x == 899 || x == 931 || x == 1408 || x == 1411 || x == 1443 || x == 2432 || x == 3456 || x == 5504 || x == 7552 || x == 11648 || x == 28032 || x == 44416 || x == 77184 || x == 93568 || x == 109952 || x == 265600 || x == 134528 || x == 396672;
+	return x == 3520 || x == 2467 || x == 3491 || x == 0 || x == 1 || x == 2 || x == 3 || x == 4 || x == 5 || x == 7 || x == 8 || x == 9 || x == 11 || x == 16 || x == 32 || x == 48 || x == 19 || x == 35 || x == 51 || x == 64 || x == 67 || x == 99 || x == 39 || x == 128 || x == 131 || x == 163 || x == 227 || x == 256 || x == 259 || x == 291 || x == 355 || x == 384 || x == 387 || x == 419 || x == 483 || x == 512 || x == 515 || x == 547 || x == 640 || x == 643 || x == 675 || x == 768 || x == 771 || x == 803 || x == 896 || x == 899 || x == 931 || x == 1408 || x == 1411 || x == 1443 || x == 2432 || x == 3456 || x == 5504 || x == 7552 || x == 11648 || x == 28032 || x == 44416 || x == 77184 || x == 93568 || x == 109952 || x == 265600 || x == 134528 || x == 396672;
 }
 
 #ifdef VERUS_PERCORE
@@ -368,7 +368,9 @@ static int verus_sel_for_cpu(int cpu)
 		 * cycles, 2690 instructions per hash -> 7552 1300 kH/s (+14.0%), 1773 cycles, 1965 instructions; 3456
 		 * (lean) 1248. Sustained all-core with the A55 change below: 6.464 -> 6.863 MH/s. Mongoose M3/M4 keep 419
 		 * (fold / lean / threaded -5..-11% there). Other A7x/X cores not measured yet. */
-		if (g_impl[cpu] == 0x41 && g_part[cpu] == 0xd0a) sel = 7552;
+		/* Cortex-A76 too: S20 (Exynos 990), 2026-11-14: one thread 483 1642 -> 7552 1701 kH/s (+3.6%); sustained
+		 * all-core 7.070 -> 7.191 MH/s (+1.7%). */
+		if (g_impl[cpu] == 0x41 && (g_part[cpu] == 0xd0a || g_part[cpu] == 0xd0b)) sel = 7552;
 		/* Mongoose M1/M2: fold (1024), the round count of cases 0x14 / 0x18 in the case jump. S8 (M2), one
 		 * thread, simpleperf 2026-11-11: 384 -> 1408 = 59.5 -> 48.4 mispredicts and 2281 -> 2177 instructions
 		 * per hash, 2365 -> 2294 cycles, 973 -> 1004 kH/s (+3.1%, two runs each). On top of sel2 (387 -> 1411,
@@ -625,6 +627,7 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 		case 11648: verus_scan_lanes<11648>(&c); break;
 		case 7552: verus_scan_lanes<7552>(&c); break;
 		case 5504: verus_scan_lanes<5504>(&c); break;
+		case 3520: verus_scan_lanes<3520>(&c); break;
 		case 2467: if (verus_x3()) verus_scan_lanes<2467, 3>(&c); else verus_scan_lanes<2467>(&c); break;
 		case 3491: verus_scan_lanes<3491>(&c); break;
 		case 3456: if (verus_x3()) verus_scan_lanes<3456, 3>(&c); else verus_scan_lanes<3456>(&c); break;
@@ -685,7 +688,7 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 		 * and SEL N (128 = journal-free, i.e. the same algorithm as the default single-nonce loop) */
 		static int sel1 = -2;
 		if (sel1 == -2) { const char *e = getenv("VERUS_SEL1"); sel1 = -1; if (e && e[0]) { char *end; long x = strtol(e, &end, 10);
-			if (!*end && (x == 128 || x == 129 || x == 130 || x == 131 || x == 160 || x == 163 || x == 192 || x == 224 || x == 640 || x == 672 || x == 1152 || x == 1155 || x == 2176 || x == 3200 || x == 5248 || x == 7296 || x == 11392 || x == 27776 || x == 44160 || x == 263296 || x == 134272 || x == 396416 || x == 265344 || x == 306304)) sel1 = (int)x;
+			if (!*end && (x == 128 || x == 129 || x == 130 || x == 131 || x == 160 || x == 163 || x == 192 || x == 224 || x == 640 || x == 672 || x == 1152 || x == 1155 || x == 2176 || x == 3200 || x == 5248 || x == 7296 || x == 11392 || x == 27776 || x == 44160 || x == 3264 || x == 396480 || x == 263296 || x == 134272 || x == 396416 || x == 265344 || x == 306304)) sel1 = (int)x;
 			else if (!*end && x == 0) sel1 = -3; } }   /* VERUS_SEL1=0: always the plain single-nonce loop */
 		int use1 = sel1;
 #ifdef VERUS_PERCORE
@@ -713,6 +716,8 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 			case 396416: verus_scan_lanes<396416, 1>(&c); break;
 			case 134272: verus_scan_lanes<134272, 1>(&c); break;
 			case 263296: verus_scan_lanes<263296, 1>(&c); break;
+			case 3264: verus_scan_lanes<3264, 1>(&c); break;
+			case 396480: verus_scan_lanes<396480, 1>(&c); break;
 			case 44160: verus_scan_lanes<44160, 1>(&c); break;
 			case 27776: verus_scan_lanes<27776, 1>(&c); break;
 			case 11392: verus_scan_lanes<11392, 1>(&c); break;

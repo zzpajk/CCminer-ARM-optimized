@@ -1623,6 +1623,49 @@ void verusclhash_port2_2_xN(void **random, const unsigned char **buf, uint64_t k
 	} else
 #endif
 #if defined(__aarch64__)
+	if ((N == 1 || N == 2) && (SEL & 64) && (SEL & 1024)) {
+		/* SEL bits 64 + 1024 (+ 2048): fold with the branch-table jump. One jump per lane to base + 4 * fold
+		 * index, where each of the 64 slots is a direct branch to the body specialised for that index (the
+		 * same bodies as the threaded dispatch, bit 4096). No table load in front of the indirect jump. */
+		constexpr int S = (SEL & ~64) | 4096;
+#define VERUS_FB_ROW(a, b) "\tb %l1\n\tb %l2\n\tb %l3\n\tb %l4\n\tb %l5\n\tb %l" #a "\n\tb %l" #b "\n\tb %l6\n"
+#define VERUS_FB_BODY(P, l, t) P##t: verus_round_port2_2<S, t>(acc[l], i, rs[l], pc[l], keyMask, fr[l], fre[l], gp[l], gpx[l], selv); goto P##d;
+#define VERUS_FB_LANE(l, P) \
+			selv = (uint64_t)_mm_cvtsi128_si64_emu(acc[l]); \
+			asm goto("adr x16, 1f\n\tadd x16, x16, %0, lsl #2\n\tbr x16\n1:\n" VERUS_FB_ROW(7, 15) VERUS_FB_ROW(8, 16) VERUS_FB_ROW(9, 17) VERUS_FB_ROW(10, 18) VERUS_FB_ROW(11, 19) VERUS_FB_ROW(12, 20) VERUS_FB_ROW(13, 21) VERUS_FB_ROW(14, 22) \
+				: : "r"(verus_fold_index(selv)) : "x16" : P##0, P##1, P##2, P##3, P##4, P##7, P##5, P##13, P##21, P##29, P##37, P##45, P##53, P##61, P##6, P##14, P##22, P##30, P##38, P##46, P##54, P##62); \
+			VERUS_FB_BODY(P, l, 0) \
+			VERUS_FB_BODY(P, l, 1) \
+			VERUS_FB_BODY(P, l, 2) \
+			VERUS_FB_BODY(P, l, 3) \
+			VERUS_FB_BODY(P, l, 4) \
+			VERUS_FB_BODY(P, l, 7) \
+			VERUS_FB_BODY(P, l, 5) \
+			VERUS_FB_BODY(P, l, 13) \
+			VERUS_FB_BODY(P, l, 21) \
+			VERUS_FB_BODY(P, l, 29) \
+			VERUS_FB_BODY(P, l, 37) \
+			VERUS_FB_BODY(P, l, 45) \
+			VERUS_FB_BODY(P, l, 53) \
+			VERUS_FB_BODY(P, l, 61) \
+			VERUS_FB_BODY(P, l, 6) \
+			VERUS_FB_BODY(P, l, 14) \
+			VERUS_FB_BODY(P, l, 22) \
+			VERUS_FB_BODY(P, l, 30) \
+			VERUS_FB_BODY(P, l, 38) \
+			VERUS_FB_BODY(P, l, 46) \
+			VERUS_FB_BODY(P, l, 54) \
+			VERUS_FB_BODY(P, l, 62) \
+			P##d: ;
+		uint64_t i = 0, selv;
+	verus_fb_loop:
+		VERUS_FB_LANE(0, verus_fb_a)
+		if (N == 2) { VERUS_FB_LANE(N - 1, verus_fb_b) }
+		if (++i < 32) goto verus_fb_loop;
+#undef VERUS_FB_ROW
+#undef VERUS_FB_BODY
+#undef VERUS_FB_LANE
+	} else
 	if ((N == 1 || N == 2) && (SEL & 64)) {
 		/* SEL bit 6 (64): branch-table dispatch. A jump table needs a load of the table entry before the
 		 * indirect jump can resolve, and that load sits on the path of every mispredict (~7 of 8 rounds).
@@ -1723,6 +1766,9 @@ template void verusclhash_port2_2_xN<2, 93312>(void **, const unsigned char **, 
 template void verusclhash_port2_2_xN<2, 109696>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<2, 134272>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<3, 3200>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 3264>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<1, 3264>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<1, 134336>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<3, 163>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<3, 2211>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<2, 512>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
