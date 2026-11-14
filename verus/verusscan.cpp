@@ -313,7 +313,7 @@ static void verus_scan_cpuinfo()
 /* the VERUS_SEL values the dispatch switch in verus_scan_lanes' caller knows */
 static inline bool verus_sel_ok(long x)
 {
-	return x == 0 || x == 1 || x == 2 || x == 3 || x == 4 || x == 5 || x == 7 || x == 8 || x == 9 || x == 11 || x == 16 || x == 32 || x == 48 || x == 19 || x == 35 || x == 51 || x == 64 || x == 67 || x == 99 || x == 39 || x == 128 || x == 131 || x == 163 || x == 227 || x == 256 || x == 259 || x == 291 || x == 355 || x == 384 || x == 387 || x == 419 || x == 483 || x == 512 || x == 515 || x == 547 || x == 640 || x == 643 || x == 675 || x == 768 || x == 771 || x == 803 || x == 896 || x == 899 || x == 931 || x == 1408 || x == 1411 || x == 1443 || x == 2432 || x == 3456 || x == 5504 || x == 7552 || x == 11648 || x == 28032 || x == 44416 || x == 77184 || x == 93568 || x == 109952 || x == 265600 || x == 134528 || x == 396672;
+	return x == 2467 || x == 3491 || x == 0 || x == 1 || x == 2 || x == 3 || x == 4 || x == 5 || x == 7 || x == 8 || x == 9 || x == 11 || x == 16 || x == 32 || x == 48 || x == 19 || x == 35 || x == 51 || x == 64 || x == 67 || x == 99 || x == 39 || x == 128 || x == 131 || x == 163 || x == 227 || x == 256 || x == 259 || x == 291 || x == 355 || x == 384 || x == 387 || x == 419 || x == 483 || x == 512 || x == 515 || x == 547 || x == 640 || x == 643 || x == 675 || x == 768 || x == 771 || x == 803 || x == 896 || x == 899 || x == 931 || x == 1408 || x == 1411 || x == 1443 || x == 2432 || x == 3456 || x == 5504 || x == 7552 || x == 11648 || x == 28032 || x == 44416 || x == 77184 || x == 93568 || x == 109952 || x == 265600 || x == 134528 || x == 396672;
 }
 
 #ifdef VERUS_PERCORE
@@ -625,6 +625,8 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 		case 11648: verus_scan_lanes<11648>(&c); break;
 		case 7552: verus_scan_lanes<7552>(&c); break;
 		case 5504: verus_scan_lanes<5504>(&c); break;
+		case 2467: verus_scan_lanes<2467>(&c); break;
+		case 3491: verus_scan_lanes<3491>(&c); break;
 		case 3456: if (verus_x3()) verus_scan_lanes<3456, 3>(&c); else verus_scan_lanes<3456>(&c); break;
 		case 2432: verus_scan_lanes<2432>(&c); break;
 		case 1443: verus_scan_lanes<1443>(&c); break;

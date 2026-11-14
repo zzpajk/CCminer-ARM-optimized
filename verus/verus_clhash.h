@@ -104,6 +104,7 @@ static inline void verus_fixkey_pristine_sel(const uint16_t * __restrict sj16, _
  * unrolled rounds at the right place (instantiated: 1152 1155 1187; scan values 1408 1411 1443).
  * bit 11 (2048): lean, selector journal (fixrand must hold 256 bytes) + shorter code in front of the case jump
  * (instantiated: 2176 3200; scan values 2432 3456; needs bit 128).
+ * lean without fold for Mongoose M3/M4: 2211 / 3235 (+fold control); scan values 2467 / 3491.
  * bit 17 (131072): j16, with lean: the old 16-bit journal (fixrand / fixrandex) instead of the selector journal.
  * bit 18 (262144): batch, key restore four rounds per step (verus_fixkey_pristine_b4 / _sel_b4); not a clhash bit.
  * Three lanes (VERUS_X3=1 at run time, Mongoose M1/M2 with 3456 or 265600): verusclhash_port2_2_xN<3, 3200>.
