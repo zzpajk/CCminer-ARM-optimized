@@ -364,6 +364,11 @@ static int verus_sel_for_cpu(int cpu)
 		 * (what build-verus.sh uses) 483 beats preload (931) on A75 +3.9%, X1 +3.1%, A78 +1.9% (sweep -C 17);
 		 * with clang 14 preload had looked better (A75 +3.2%, A78 +1.8%, X1 +1.3% over 419). Mongoose: 419. */
 		if (g_impl[cpu] == 0x41 && g_part[cpu] != 0xd09) sel = 483;
+		/* Cortex-A75: threaded (7552). S10 (Exynos 9820), one thread, simpleperf 2026-11-13: 483 1140 kH/s, 2021
+		 * cycles, 2690 instructions per hash -> 7552 1300 kH/s (+14.0%), 1773 cycles, 1965 instructions; 3456
+		 * (lean) 1248. Sustained all-core with the A55 change below: 6.464 -> 6.863 MH/s. Mongoose M3/M4 keep 419
+		 * (fold / lean / threaded -5..-11% there). Other A7x/X cores not measured yet. */
+		if (g_impl[cpu] == 0x41 && g_part[cpu] == 0xd0a) sel = 7552;
 		/* Mongoose M1/M2: fold (1024), the round count of cases 0x14 / 0x18 in the case jump. S8 (M2), one
 		 * thread, simpleperf 2026-11-11: 384 -> 1408 = 59.5 -> 48.4 mispredicts and 2281 -> 2177 instructions
 		 * per hash, 2365 -> 2294 cycles, 973 -> 1004 kH/s (+3.1%, two runs each). On top of sel2 (387 -> 1411,
@@ -684,9 +689,13 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 #ifdef VERUS_PERCORE
 		/* Cortex-A53: one lane through the lane code with fold (1152) instead of the plain loop. S8, one
 		 * thread, simpleperf 2026-11-11: 55.4 -> 48.1 mispredicts, 2376 -> 2135 instructions, 3322 -> 3076
-		 * cycles per hash, 506.5 -> 547.1 kH/s (+8.0%, two runs each; s128 without fold: 502). Other
-		 * in-order cores (A55 ...) are not measured yet and keep the plain loop. */
-		if (sel1 == -1) { int cpu = sched_getcpu(); if (cpu >= 0 && cpu < 1024 && g_impl[cpu] == 0x41 && g_part[cpu] == 0xd03) use1 = 263296; }
+		 * cycles per hash, 506.5 -> 547.1 kH/s (+8.0%, two runs each; s128 without fold: 502). The A55 has its
+		 * own value below; other in-order cores (A510 ...) are not measured and keep the plain loop. */
+		if (sel1 == -1) { int cpu = sched_getcpu(); if (cpu >= 0 && cpu < 1024 && g_impl[cpu] == 0x41 && g_part[cpu] == 0xd03) use1 = 263296;
+			/* Cortex-A55: one lane with lean + 16-bit journal + batched restore (396416). S9 / S10, one thread
+			 * (2026-11-13): plain loop 536.9 / 593.5 kH/s -> 396416 574.0 / 633.5 (+6.9% / +6.7%); 1152 +5.4%,
+			 * 263296 +6.3%. Sustained all-core on the S9: 6.068 -> 6.212 MH/s (A55 only). */
+			if (cpu >= 0 && cpu < 1024 && g_impl[cpu] == 0x41 && g_part[cpu] == 0xd05) use1 = 396416; }
 		/* 263296 = 1152 + batched key restore (bit 18: four rounds per step, loads before stores). S8 A53, one
 		 * thread, two runs each (2026-11-12): 1152 540.9 / 541.8 kH/s, 263296 542.0 / 543.9. Lean on the A53,
 		 * split: 3200 526, + 16-bit journal 535-539, + batched restore 533, both 540 = the fold level, with
