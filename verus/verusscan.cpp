@@ -433,7 +433,7 @@ static int verus_lanes_for_this_core(int thr_id, int *sel)
 	if (envl > 0) lanes = envl;
 	*sel = (lanes > 1 && VERUS_LANES == 2) ? verus_sel_for_cpu(cpu) : 0;
 	static __thread int logged = 0;
-	if (!logged) { logged = 1; applog(LOG_INFO, "Verus thread %d on cpu %d: %d nonce(s) per step%s (SEL %d)", thr_id, cpu, (lanes > 1 && (*sel == 3456 || *sel == 265600) && verus_x3()) ? 3 : lanes,
+	if (!logged) { logged = 1; applog(LOG_INFO, "Verus thread %d on cpu %d: %d nonce(s) per step%s (SEL %d)", thr_id, cpu, (lanes > 1 && (*sel == 3456 || *sel == 265600 || *sel == 419 || *sel == 2467) && verus_x3()) ? 3 : lanes,
 		lanes == 1 ? "" : (*sel >= 65536 ? ", +goto+dup" : *sel >= 40960 ? ", +goto+arms2" : *sel >= 24576 ? ", +goto+arms1" : *sel >= 8192 ? ", +goto" : *sel >= 4096 ? ", +fold+threaded" : *sel >= 3072 ? ", +fold+lean" : *sel >= 2048 ? ", +lean" : *sel >= 1024 ? ", +fold" : *sel >= 512 ? ", +preload" : *sel >= 128 ? ((*sel & 256) ? ((*sel & 128) ? ", +haraka2+pristine" : ", +haraka2") : ", +pristine") : *sel == 39 ? ", sel3+selc" : *sel == 99 ? ", sel2+selc+bt" : *sel == 67 ? ", sel2+bt" : *sel == 64 ? ", bt" : *sel == 51 ? ", sel2+light+selc" : *sel == 35 ? ", sel2+selc" : *sel == 19 ? ", sel2+light" : *sel == 48 ? ", light+selc" : *sel == 32 ? ", selc" : *sel == 16 ? ", light" : *sel == 11 ? ", fuse+sel2" : *sel == 9 ? ", fuse+sel" : *sel == 8 ? ", fuse" : *sel == 7 ? ", sel3" : *sel == 5 ? ", sel14+full14" : *sel == 4 ? ", full14" : *sel == 3 ? ", sel2" : *sel == 1 ? ", sel" : *sel == 2 ? ", sel18" : ""), *sel); }
 	return lanes;
 #else
@@ -488,7 +488,7 @@ static __attribute__((noinline)) void verus_scan_lanes(struct verus_scan_ctx *c)
 		}
 		memset(vh, 0, sizeof(vh));
 
-		Verus2hash_xN<NLT, ((NLT <= 2 || (NLT == 3 && (SEL == 3456 || SEL == 265600))) ? SEL : 0)>(hp, L, np);   /* 3 lanes: only the lean M2 values are instantiated */
+		Verus2hash_xN<NLT, ((NLT <= 2 || (NLT == 3 && (SEL == 3456 || SEL == 265600 || SEL == 419 || SEL == 2467))) ? SEL : 0)>(hp, L, np);   /* 3 lanes: only these values are instantiated */
 
 		for (int lane = 0; lane < NL; lane++) {
 			if (vh[lane][7] <= Htarg) {
@@ -625,7 +625,7 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 		case 11648: verus_scan_lanes<11648>(&c); break;
 		case 7552: verus_scan_lanes<7552>(&c); break;
 		case 5504: verus_scan_lanes<5504>(&c); break;
-		case 2467: verus_scan_lanes<2467>(&c); break;
+		case 2467: if (verus_x3()) verus_scan_lanes<2467, 3>(&c); else verus_scan_lanes<2467>(&c); break;
 		case 3491: verus_scan_lanes<3491>(&c); break;
 		case 3456: if (verus_x3()) verus_scan_lanes<3456, 3>(&c); else verus_scan_lanes<3456>(&c); break;
 		case 2432: verus_scan_lanes<2432>(&c); break;
@@ -645,7 +645,7 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 		case 515: verus_scan_lanes<515>(&c); break;
 		case 512: verus_scan_lanes<512>(&c); break;
 		case 483: verus_scan_lanes<483>(&c); break;
-		case 419: verus_scan_lanes<419>(&c); break;
+		case 419: if (verus_x3()) verus_scan_lanes<419, 3>(&c); else verus_scan_lanes<419>(&c); break;
 		case 387: verus_scan_lanes<387>(&c); break;
 		case 384: verus_scan_lanes<384>(&c); break;
 		case 355: verus_scan_lanes<355>(&c); break;
