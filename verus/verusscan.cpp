@@ -415,11 +415,24 @@ static int verus_sel_for_cpu(int cpu)
 }
 
 /* testing aid: VERUS_X3=1 runs three nonces per step on the cores whose SEL is 3456 or 265600 (lean) */
+/* Three nonces per step (applies to SEL 419 / 2467 / 3456 / 265600). VERUS_X3=1 forces it on, VERUS_X3=0 off;
+ * unset: on for Mongoose M3 / M4 / M5 (53:002-004), whose 64 KB L1D holds three key copies. 20-min sustained,
+ * 2026-11-14: S9 (M3) 6.231 -> 6.360 MH/s, S10 (M4) 7.034 -> 7.110, S20 (M5) 7.071 -> 7.120. The S8's M2
+ * (32 KB L1D) loses with it. Decided once per thread (threads are pinned). */
 static inline bool verus_x3()
 {
-	static int x3 = -1;
-	if (x3 < 0) { const char *e = getenv("VERUS_X3"); x3 = (e && e[0] == '1' && !e[1]) ? 1 : 0; }
-	return x3 == 1;
+	static int env = -2;
+	if (env == -2) { const char *e = getenv("VERUS_X3"); env = (e && (e[0] == '0' || e[0] == '1') && !e[1]) ? e[0] - '0' : -1; }
+	if (env >= 0) return env == 1;
+	static __thread int t = -1;
+	if (t < 0) {
+		t = 0;
+#ifdef VERUS_PERCORE
+		const int cpu = sched_getcpu();
+		if (cpu >= 0 && cpu < 1024 && g_impl[cpu] == 0x53 && g_part[cpu] >= 0x002 && g_part[cpu] <= 0x004) t = 1;
+#endif
+	}
+	return t == 1;
 }
 
 static int verus_lanes_for_this_core(int thr_id, int *sel)
