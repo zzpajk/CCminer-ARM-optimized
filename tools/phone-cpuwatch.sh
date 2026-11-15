@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # phone-cpuwatch.sh [minutes] [widen|nowiden] [status-seconds] [miner options...]
 # How often does Android take CPUs away from a miner, and how fast / hot / throttled is the phone under load?
-# Runs a benchmark (never a pool) on all CPUs: ~/ccminer/ccminer-verus (termux-install.sh) if present, else
+# Runs a benchmark on all CPUs (a pool only with pool=URL, which accepts just the user's local stratum): ~/ccminer/ccminer-verus (termux-install.sh) if present, else
 # the newest binary built by verus-ref-bench.sh. Samples every 10 s: the foreground/top-app cpusets, the CPUs
 # the miner is allowed, the CPU each miner thread last ran on, the screen state (via root, if available).
 # Changes are logged with timestamps; a status line every status-seconds (default 300) with the hashrate,
@@ -23,12 +23,16 @@ case "$CAPMHZ" in *[!0-9]*) echo "bad cap value $CAPMHZ"; exit 2;; esac
 case "$STS" in ''|*[!0-9]*|0) STS=300;; esac
 case "$MIN" in ''|*[!0-9]*) echo "minutes must be a number"; exit 2;; esac
 MOPTS=(); WANTBIN=""
+POOL=""; WORKER=""
 for o in "$@"; do
 	case "$o" in
 		VERUS_SELMAP=*)
 			case "${o#*=}" in ''|*[!0-9a-fA-F:=,]*) echo "bad value in $o"; exit 2;; esac; export "$o";;
 		VERUS_SEL=*|VERUS_SEL1=*|VERUS_LANES=*|VERUS_PRE1=*|VERUS_X3=*|VERUS_SORT=*)
 			case "${o#*=}" in ''|*[!0-9]*) echo "bad value in $o"; exit 2;; esac; export "$o";;
+		pool=*) # a real pool session: ONLY the user's own local stratum, at the user's explicit request (2026-11-15)
+			[ "${o#pool=}" = "stratum+tcp://192.168.1.10:8000" ] || { echo "pool not allowed: ${o#pool=}"; exit 2; }; POOL="${o#pool=}";;
+		worker=*) case "${o#worker=}" in ''|*[!A-Za-z0-9.]*) echo "bad worker name"; exit 2;; esac; WORKER="${o#worker=}";;
 		bin=*) case "${o#bin=}" in ''|*[!a-z0-9-]*) echo "bad binary name in $o"; exit 2;; esac; WANTBIN="${o#bin=}";;
 		*) MOPTS+=("$o");;
 	esac
@@ -86,7 +90,12 @@ if [ -n "$CAPMHZ" ]; then
 fi
 LOG="$HOME/verus-runs/cpuwatch-miner.log"
 echo "$(date '+%F %T') variant environment: $(env | grep -E '^VERUS_(SEL|SEL1|LANES|PRE1|X3|SELMAP)=' | tr '\n' ' ')(empty = built-in defaults)"
+if [ -n "$POOL" ]; then
+	echo "$(date '+%F %T') POOL session on $POOL as $WORKER (password x)"
+	"$BIN" -a verus -o "$POOL" -u "$WORKER" -p x -t "$NCPU" --no-color --summary-interval=60 "$@" > "$LOG" 2>&1 < /dev/null &
+else
 "$BIN" -a verus --benchmark -t "$NCPU" --no-color "$@" > "$LOG" 2>&1 < /dev/null &
+fi
 MP=$!
 cleanup() { kill "$MP" 2>/dev/null; wait "$MP" 2>/dev/null
 	if [ "$MODE" = widen ] && [ -n "$ORIG" ]; then timeout 15 "$SU" -c "echo $ORIG > $F" </dev/null && echo "$(ts) foreground cpuset restored to $ORIG"; fi
@@ -111,7 +120,8 @@ while [ "$(date +%s)" -lt "$end" ] && kill -0 "$MP" 2>/dev/null; do
 		last=$cur
 	fi
 	if [ "$(date +%s)" -ge "$nextst" ]; then
-		hr=$(grep -oE 'Total: [0-9.]+ [kMG]?H/s' "$LOG" 2>/dev/null | tail -1)
+		hr=$(grep -oE '(Total|Summary): [0-9.]+ [kMG]?H/s' "$LOG" 2>/dev/null | tail -1 | awk '{v = $2; if ($3 == "MH/s") v *= 1000; if ($3 == "H/s") v /= 1000; printf "Total: %.1f kH/s", v}')
+		[ -n "$POOL" ] && hr="$hr, $(grep -oE 'accepted [0-9]+/[0-9]+, not sent [0-9]+' "$LOG" | tail -1)"
 		if [ $(( $(date +%s) - t_start )) -ge 300 ] && [ -n "$hr" ]; then
 			sum=$(awk -v a="$sum" -v b="$(echo "$hr" | awk '{print $2}')" 'BEGIN {print a + b}'); cnt=$((cnt + 1)); fi
 		echo "$(ts) status: ${hr:-no total yet} | MHz $(freqs) | caps $(caps | sed 's/^$/none/') | $(temps) | $cur | threads on $on"
@@ -121,5 +131,6 @@ while [ "$(date +%s)" -lt "$end" ] && kill -0 "$MP" 2>/dev/null; do
 done
 echo "$(ts) done: $samples samples, $changes changes, miner had fewer than all CPUs in $narrow samples ($(( narrow * 100 / (samples ? samples : 1) ))%)"
 echo "$(ts) average hashrate after the first 5 min: $(awk -v s="$sum" -v k="$cnt" 'BEGIN {if (k > 0) printf "%.1f kH/s over %d status lines", s / k, k; else print "n/a"}')"
-echo "$(ts) miner hashrate lines (first/last):"; grep -E 'Total:' "$LOG" | sed -n '1p;$p'
+[ -n "$POOL" ] && { echo "$(ts) pool: $(grep -cE 'accepted: ' "$LOG") accepted-lines, last: $(grep -E 'accepted: ' "$LOG" | tail -1)"; grep -iE 'reject|stratum|diff|HASH CHECK' "$LOG" | tail -8; }
+echo "$(ts) miner hashrate lines (first/last):"; grep -E 'Total:|Summary:' "$LOG" | sed -n '1p;$p'
 echo "$(ts) variant per thread:"; grep -oE 'Verus thread [0-9]+.*' "$LOG" | sort -t' ' -k3,3n | uniq | head -16
