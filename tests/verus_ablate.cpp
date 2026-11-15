@@ -32,7 +32,30 @@ int main(int argc, char **argv)
 	unsigned char nonce[15] = {0};
 	uint64_t n = 0, sink = 0;
 	double t0 = now(), t1 = t0;
-#ifdef VERUS_X2
+#if defined(VERUS_X2) && defined(ABL_LANES)
+	/* ABL_LANES nonces in lockstep through the miner's lane code with SEL = ABL_SEL (must be instantiated for
+	 * that lane count). With -DVERUS_ABL_SWITCH_FIXED every lane runs the same, predictable case in a round:
+	 * the upper bound for sorting hashes by case (no case-jump mispredicts, full overlap of the lanes). */
+	enum { NL = ABL_LANES };
+	static __m128i keyN[NL][560] __attribute__((aligned(64))), prist[560] __attribute__((aligned(64))), gpN[NL][32], gpxN[NL][32];
+	static uint16_t frN[NL][128], freN[NL][128];
+	static unsigned char bufN[NL][64] __attribute__((aligned(16))), hashN[NL][32] __attribute__((aligned(16))), nonceN[NL][15];
+	memcpy(prist, key, sizeof(key));
+	struct verus_lane L[NL]; unsigned char *hp[NL]; const unsigned char *np[NL];
+	for (int l = 0; l < NL; l++) {
+		memcpy(keyN[l], key, sizeof(key)); memcpy(bufN[l], buf, 64);
+		L[l].key = keyN[l]; L[l].fixrand = frN[l]; L[l].fixrandex = freN[l]; L[l].gp = gpN[l]; L[l].gpx = gpxN[l];
+		L[l].buf = bufN[l]; L[l].pristine = prist; hp[l] = hashN[l]; np[l] = nonceN[l];
+	}
+	while (t1 - t0 < secs) {
+		for (int k = 0; k < 128; k++, n += NL) {
+			for (int l = 0; l < NL; l++) { uint64_t v = n + l; memcpy(nonceN[l] + 11, &v, 4); }
+			Verus2hash_xN<NL, ABL_SEL>(hp, L, np);
+			for (int l = 0; l < NL; l++) sink += hashN[l][28];
+		}
+		t1 = now();
+	}
+#elif defined(VERUS_X2)
 	/* two-nonce path (variant x2), same lane code as the miner */
 	alignas(64) __m128i keyB[560], gpB[32], gpxB[32];
 	uint16_t frB[32], freB[32];

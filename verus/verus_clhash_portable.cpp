@@ -1800,6 +1800,10 @@ template void verusclhash_port2_2_xN<1, 640>(void **, const unsigned char **, ui
 template void verusclhash_port2_2_xN<1, 672>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<3, 0>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<4, 0>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+#ifdef VERUS_ABL_LANES_EXTRA   /* tests/verus_ablate.cpp only (timing experiments): more lanes of the SEL 419 rounds */
+template void verusclhash_port2_2_xN<4, 163>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<6, 163>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+#endif
 /* BEGIN GENERATED x2fuse (tools/gen_fuse.py) */
 #ifdef VERUS_FUSE
 /* variant x2fuse: two lanes with ONE 64-way jump per round on the pair (case of lane A, case of lane B).

@@ -17,7 +17,7 @@ set -u
 SEC="${1:-30}"; CPUS="${2:-auto}"; MODE="${3:-both}"; SELS="${4:-default}"; shift $(( $# < 4 ? $# : 4 ))
 case "$SEC" in ''|*[!0-9]*|0) echo "seconds must be a number"; exit 2;; esac
 REV=cpu-cycles; case "$MODE" in fullmiss) MODE=full; REV=branch-misses;; esac   # fullmiss: the full listing with branch-miss samples (where mispredicts are detected)
-case "$MODE" in stat|record|both|full) ;; *) echo "mode must be stat, record, both, full or fullmiss"; exit 2;; esac
+case "$MODE" in stat|record|both|full|ablate) ;; *) echo "mode must be stat, record, both, full, fullmiss or ablate"; exit 2;; esac
 case "$CPUS" in auto) ;; *[!0-9,]*|'') echo "cpus must be auto or a list like 0,4"; exit 2;; esac
 case "$SELS" in *[!a-z0-9,]*|'') echo "sels must be a list like default,384,l1"; exit 2;; esac
 ts() { date '+%F %T'; }
@@ -59,6 +59,39 @@ if [ "$CPUS" = auto ]; then
 fi
 echo "$(ts) allowed cpus: $(echo $ALLOWED | tr ' ' ','); measuring cpus $CPUS, VERUS_SEL $SELS, $SEC s per pass, mode $MODE"
 awk '/^processor/{p=$3} /^CPU implementer/{i=$4} /^CPU part/{print "  cpu" p ": " i ":" $4}' /proc/cpuinfo | tr '\n' ' '; echo
+
+if [ "$MODE" = ablate ]; then
+	# Timing experiment, NOT a miner (the "fix" builds hash wrong on purpose and cannot find shares). "sels" is the
+	# fork commit to build from. N nonces in lockstep through the SEL 419 lane code: "full" = the real case jump,
+	# "fix" = every lane runs the same, predictable case in a round. fix / full is the most that sorting hashes
+	# by case (no case-jump mispredicts) could win at that lane count, before its bookkeeping.
+	command -v taskset >/dev/null || { echo "ablate needs taskset"; exit 1; }
+	AS="$HOME/verus-runs/ablate"; rm -rf "$AS"; mkdir -p "$AS/src"
+	git -C "$HOME/verus-runs/fork.git" archive "$SELS" | tar -x -C "$AS/src" || { echo "cannot unpack commit $SELS"; exit 1; }
+	cd "$AS/src" || exit 1
+	CF="-O2 -march=armv8-a+crypto -fno-strict-aliasing -I. -Iverus"; JT=""
+	echo 'int main(){return 0;}' > "$AS/t.c"
+	clang -mllvm -aarch64-min-jump-table-entries=4 "$AS/t.c" -o "$AS/t" 2>/dev/null && JT="-mllvm -aarch64-min-jump-table-entries=4"
+	echo "$(ts) building the ablation harness from $SELS: $(clang --version | head -1) $JT"
+	clang $CF -c verus/haraka.c -o "$AS/hk.o" && clang $CF -c verus/haraka_portable.c -o "$AS/hkp.o" || { echo "haraka build failed"; exit 1; }
+	for m in full fix; do
+		f="-DVERUS_X2 -DVERUS_PRISTINE -DVERUS_ABL_LANES_EXTRA"; [ $m = fix ] && f="$f -DVERUS_ABL_SWITCH_FIXED"
+		clang++ $CF $JT -std=gnu++11 $f -c verus/verus_clhash_portable.cpp -o "$AS/cl-$m.o" 2>"$AS/err.txt" || { echo "clhash build failed ($m)"; tail -5 "$AS/err.txt"; exit 1; }
+		for n in 2 3 4 6; do
+			clang++ $CF $JT -std=gnu++11 $f -DABL_LANES=$n -DABL_SEL=419 tests/verus_ablate.cpp "$AS/cl-$m.o" "$AS/hk.o" "$AS/hkp.o" -o "$AS/abl-$m-$n" 2>"$AS/err.txt" || { echo "harness build failed ($m $n)"; tail -5 "$AS/err.txt"; exit 1; }
+		done
+	done
+	echo "$(ts) built; $SEC s per run, two rounds, kH/s (clock MHz after the run)"
+	for cpu in $(echo "$CPUS" | tr ',' ' '); do
+		echo "$ALLOWED" | grep -qx "$cpu" || { echo "cpu$cpu is not in the allowed set, skipped"; continue; }
+		for r in 1 2; do for n in 2 3 4 6; do
+			a=$(taskset -c "$cpu" "$AS/abl-full-$n" "$SEC" 2>/dev/null | head -1); fa=$(( $(cat $C/cpu$cpu/cpufreq/scaling_cur_freq 2>/dev/null || echo 0) / 1000 ))
+			b=$(taskset -c "$cpu" "$AS/abl-fix-$n" "$SEC" 2>/dev/null | head -1); fb=$(( $(cat $C/cpu$cpu/cpufreq/scaling_cur_freq 2>/dev/null || echo 0) / 1000 ))
+			awk -v c="$cpu" -v r="$r" -v n="$n" -v a="${a:-0}" -v b="${b:-0}" -v fa="$fa" -v fb="$fb" 'BEGIN { printf "cpu%s round %s, %s lanes: full %.1f (%s), fix %.1f (%s), fix/full %+.1f%%\n", c, r, n, a / 1e3, fa, b / 1e3, fb, (a > 0 ? 100 * (b / a - 1) : 0) }'
+		done; done
+	done
+	rm -rf "$AS"; exit 0
+fi
 
 TMPD="$HOME/verus-runs/perf"; mkdir -p "$TMPD"
 DATA=/data/local/tmp/verus-perf-$$.data
