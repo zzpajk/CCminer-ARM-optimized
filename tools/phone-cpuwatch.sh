@@ -31,7 +31,7 @@ for o in "$@"; do
 		VERUS_SEL=*|VERUS_SEL1=*|VERUS_LANES=*|VERUS_PRE1=*|VERUS_X3=*|VERUS_SORT=*)
 			case "${o#*=}" in ''|*[!0-9]*) echo "bad value in $o"; exit 2;; esac; export "$o";;
 		pool=*) # a real pool session: ONLY the user's own local stratum, at the user's explicit request (2026-11-15)
-			[ "${o#pool=}" = "stratum+tcp://192.168.1.10:8000" ] || { echo "pool not allowed: ${o#pool=}"; exit 2; }; POOL="${o#pool=}";;
+			[ "${o#pool=}" = "stratum+tcp://192.168.1.12:8000" ] || { echo "pool not allowed: ${o#pool=}"; exit 2; }; POOL="${o#pool=}";;
 		worker=*) case "${o#worker=}" in ''|*[!A-Za-z0-9.]*) echo "bad worker name"; exit 2;; esac; WORKER="${o#worker=}";;
 		bin=*) case "${o#bin=}" in ''|*[!a-z0-9-]*) echo "bad binary name in $o"; exit 2;; esac; WANTBIN="${o#bin=}";;
 		*) MOPTS+=("$o");;
