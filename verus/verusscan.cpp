@@ -28,6 +28,7 @@ extern "C"
 #include "haraka.h"
 }
 #include "verus_x2.h"
+#include "verus_sort.h"
 
 enum
 {
@@ -540,6 +541,81 @@ static __attribute__((noinline)) void verus_scan_lanes(struct verus_scan_ctx *c)
 		}
 	} while (!work_restart[c->thr_id].restart);
 }
+
+/* VERUS_SORT=1 (experimental): 32 hashes in flight, rounds grouped by case (verus/verus_sort.h). Hashes still
+ * in flight when the scan ends are dropped (at most 32 nonces per call). */
+struct verus_sort_scan {
+	struct verus_scan_ctx *c; struct verus_sort S; uint32_t next; int found; uint32_t tick;
+};
+static int verus_sort_cb(void *p)
+{
+	struct verus_sort_scan *q = (struct verus_sort_scan *)p;
+	struct verus_scan_ctx *c = q->c; struct work *work = c->work;
+	int stop = 0;
+	for (uint32_t k = 0; k < q->S.cnt[8]; k++) {
+		const int id = q->S.bk[8][k]; struct verus_slane *s = q->S.lane + id;
+		uint32_t vh[8]; memset(vh, 0, sizeof(vh));
+		verus_sort_finish(s, (unsigned char *)vh, c->pristine);
+		if (vh[7] <= c->Htarg && !q->found) {
+			((uint32_t *)(&c->nonceSpace[11]))[0] = s->nonce;
+			uint32_t full[8];
+			int ok = verus_full_check(full, c->blockhash_half, c->nonceSpace, c->data_key, work->target, vh[7]);
+			if (ok == 0 && !opt_submit_low) {
+				gpulog(LOG_INFO, c->thr_id, "share above the pool target, not sent (%lu so far)",
+					__sync_add_and_fetch(&verus_not_sent, 1));
+			} else {
+				memcpy(c->vhash, ok >= 0 ? full : vh, 8 * sizeof(uint32_t));
+				work->valid_nonces++;
+				memcpy(work->data, c->full_data, 140);
+				int nonce = work->valid_nonces - 1;
+				memcpy(work->extra, c->sol_data, 1347);
+				memcpy(work->extra + 1332, c->nonceSpace, 15);
+				bn_store_hash_target_ratio(c->vhash, work->target, work, nonce);
+				work->nonces[work->valid_nonces - 1] = ((uint32_t*)c->full_data)[NONCE_OFT];
+				q->found = 1; stop = 1;
+			}
+		}
+		uint8_t n15[15]; memcpy(n15, c->nonceSpace, 15);
+		s->nonce = q->next++; ((uint32_t *)(&n15[11]))[0] = s->nonce;
+		verus_sort_start(&q->S, id, n15);
+	}
+	q->S.cnt[8] = 0;
+	*c->hashes_done = q->next;
+	if ((uint64_t)q->next + VERUS_SORT_LANES >= (uint64_t)c->max_nonce || work_restart[c->thr_id].restart) stop = 1;
+	if (opt_benchmark && (++q->tick & 0xFF) == 0) {
+		struct timeval tv_now; gettimeofday(&tv_now, NULL);
+		if ((int64_t)(tv_now.tv_sec - c->tv_start.tv_sec) * 1000000 + (tv_now.tv_usec - c->tv_start.tv_usec) >= 1000000) stop = 1;
+	}
+	return stop;
+}
+static __attribute__((noinline)) void verus_scan_sorted(struct verus_scan_ctx *c)
+{
+	enum { NL = VERUS_SORT_LANES, KW = VERUS_KEY_SIZE128 + 8 };
+	static __thread unsigned char *mem = NULL;
+	if (!mem && posix_memalign((void **)&mem, 64, NL * (KW * sizeof(__m128i) + 64) + NL * sizeof(struct verus_slane))) { mem = NULL; return; }
+	__m128i *keys = (__m128i *)mem; unsigned char *bufs = mem + NL * KW * sizeof(__m128i);
+	struct verus_sort_scan q; memset(&q, 0, sizeof(q));
+	q.c = c; q.S.lane = (struct verus_slane *)(bufs + NL * 64); q.next = c->nonce_buf;
+	throughput = NL;
+	for (int l = 0; l < NL; l++) {
+		struct verus_slane *s = q.S.lane + l;
+		s->key = keys + l * KW; s->buf = bufs + l * 64;
+		memcpy(s->key, c->data_key, VERUS_KEY_SIZE128 * sizeof(__m128i));
+		memcpy(s->buf, c->blockhash_half, 64);
+		uint8_t n15[15]; memcpy(n15, c->nonceSpace, 15);
+		s->nonce = q.next++; ((uint32_t *)(&n15[11]))[0] = s->nonce;
+		verus_sort_start(&q.S, l, n15);
+	}
+	verus_sort_run(&q.S, verus_sort_cb, &q);
+}
+static bool verus_sort_on(int thr_id)
+{
+	static int env = -2;
+	if (env == -2) { const char *e = getenv("VERUS_SORT"); env = (e && e[0] == '1' && !e[1]) ? 1 : 0; }
+	static __thread int logged = 0;
+	if (env == 1 && !logged) { logged = 1; applog(LOG_INFO, "Verus thread %d: VERUS_SORT=1, %d hashes in flight, rounds grouped by case", thr_id, VERUS_SORT_LANES); }
+	return env == 1;
+}
 #endif
 
 extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce, unsigned long *hashes_done)
@@ -632,7 +708,9 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 			NULL
 #endif
 			};
+		if (c.pristine && verus_sort_on(thr_id)) sel = -7;
 		switch (sel) {
+		case -7: verus_scan_sorted(&c); break;
 		case 396672: verus_scan_lanes<396672>(&c); break;
 		case 265600: if (verus_x3()) verus_scan_lanes<265600, 3>(&c); else verus_scan_lanes<265600>(&c); break;
 		case 134528: verus_scan_lanes<134528>(&c); break;

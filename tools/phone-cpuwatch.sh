@@ -27,7 +27,7 @@ for o in "$@"; do
 	case "$o" in
 		VERUS_SELMAP=*)
 			case "${o#*=}" in ''|*[!0-9a-fA-F:=,]*) echo "bad value in $o"; exit 2;; esac; export "$o";;
-		VERUS_SEL=*|VERUS_SEL1=*|VERUS_LANES=*|VERUS_PRE1=*|VERUS_X3=*)
+		VERUS_SEL=*|VERUS_SEL1=*|VERUS_LANES=*|VERUS_PRE1=*|VERUS_X3=*|VERUS_SORT=*)
 			case "${o#*=}" in ''|*[!0-9]*) echo "bad value in $o"; exit 2;; esac; export "$o";;
 		bin=*) case "${o#bin=}" in ''|*[!a-z0-9-]*) echo "bad binary name in $o"; exit 2;; esac; WANTBIN="${o#bin=}";;
 		*) MOPTS+=("$o");;
