@@ -48,6 +48,7 @@ static int cb(void *)
 int main(int argc, char **argv)
 {
 	long iters = argc > 1 ? atol(argv[1]) : 20000, bad = 0, done = 0;
+	const int pf = argc > 2 ? atoi(argv[2]) : 1;
 	static __m128i gpS[32], gpxS[32]; static uint16_t frS[32], freS[32];
 	while (done < iters) {
 		alignas(16) unsigned char half[64], bS[64];
@@ -60,7 +61,7 @@ int main(int argc, char **argv)
 			unsigned char n[15]; lane[l].nonce = next++; put_nonce(n, lane[l].nonce);
 			verus_sort_start(&S, l, n);
 		}
-		verus_sort_run(&S, cb, NULL);
+		verus_sort_run(&S, cb, NULL, pf);
 		long b = dirty + (got != M);
 		for (uint32_t v = 0; v < M; v++) {
 			unsigned char n[15], hS[32]; memset(hS, 0, 32); put_nonce(n, v);
@@ -72,6 +73,6 @@ int main(int argc, char **argv)
 		if (b && bad < 5) printf("mismatches in block at %ld: %ld\n", done, b);
 		bad += b; done += M;
 	}
-	printf("sorttest (%d in flight): %ld hashes, %ld mismatches -> %s\n", NL, done, bad, bad ? "FAIL" : "PASS");
+	printf("sorttest (%d in flight, prefetch %d): %ld hashes, %ld mismatches -> %s\n", NL, pf, done, bad, bad ? "FAIL" : "PASS");
 	return bad ? 1 : 0;
 }

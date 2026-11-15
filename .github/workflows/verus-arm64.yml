@@ -61,8 +61,9 @@ jobs:
           done
           clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -I. -Iverus \
             tests/verus_sorttest.cpp clx2.o hk.o hkp.o -o sorttest
-          ./sorttest 300000 | tee -a difftest.txt
-          grep -q 'sorttest.*PASS' difftest.txt
+          timeout 300 ./sorttest 300000 | tee -a difftest.txt
+          timeout 300 ./sorttest 300000 0 | tee -a difftest.txt
+          [ "$(grep -c 'sorttest.*PASS' difftest.txt)" = 2 ]
           clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_FUSE -I. -Iverus \
             -c verus/verus_clhash_portable.cpp -o clfuse.o
           clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_FUSE -I. -Iverus \

@@ -1820,12 +1820,16 @@ FORCE_INLINE unsigned verus_sort_pick(struct verus_sort *S, uint8_t *g)
 	for (uint32_t k = 1; k < 8; k++) { const uint32_t v = (cnt[k] << 3) | k; m = v > m ? v : m; }
 	const unsigned c = m & 7; uint32_t n = m >> 3;
 	if (__builtin_expect(n < 4, 0)) return 8;
-	n -= 4; cnt[c] = n;
-	memcpy(g, &S->bk[c][n], 4);
+	/* take the four OLDEST entries (the bottom of the list) and move four others into their place: a hash
+	 * left at the bottom of a list that is never emptied would wait forever otherwise */
+	uint8_t *const b = S->bk[c];
+	memcpy(g, b, 4);
+	uint32_t t; memcpy(&t, b + (n >= 8 ? n - 4 : 4), 4); memcpy(b, &t, 4);
+	cnt[c] = n - 4;
 	return c;
 }
 /* one round of case C for four hashes; each is then queued for its next case (list 8 after round 31) */
-template<int C>
+template<int C, int PF>
 FORCE_INLINE void verus_sort_group(struct verus_sort *S, const uint32_t g4)
 {
 	struct verus_slane *const lane = S->lane; uint32_t *const cnt = S->cnt;
@@ -1839,10 +1843,11 @@ FORCE_INLINE void verus_sort_group(struct verus_sort *S, const uint32_t g4)
 		const uint64_t sel = (uint64_t)_mm_cvtsi128_si64_emu(acc);
 		const uint64_t nb = (i == 31) ? 8 : ((sel >> 2) & 7);
 		const uint32_t n = cnt[nb]; S->bk[nb][n] = (uint8_t)id; cnt[nb] = n + 1;
-		__builtin_prefetch(s->key + ((sel >> 5) & 511), 1); __builtin_prefetch(s->key + ((sel >> 32) & 511), 1);
+		if (PF) { __builtin_prefetch(s->key + ((sel >> 5) & 511), 1); __builtin_prefetch(s->key + ((sel >> 32) & 511), 1); }
 	}
 }
-void verus_sort_run(struct verus_sort *S, int (*cb)(void *), void *ctx)
+template<int PF>
+static __attribute__((noinline)) void verus_sort_run_t(struct verus_sort *S, int (*cb)(void *), void *ctx)
 {
 	uint32_t g, ng; uint8_t t[4];
 	unsigned c = verus_sort_pick(S, t), nc; memcpy(&g, t, 4);
@@ -1850,18 +1855,23 @@ void verus_sort_run(struct verus_sort *S, int (*cb)(void *), void *ctx)
 		/* the step after this one is chosen BEFORE this step runs: its case jump does not wait for these rounds */
 		nc = verus_sort_pick(S, t); memcpy(&ng, t, 4);
 		switch (c) {
-		case 0: verus_sort_group<0>(S, g); break;
-		case 1: verus_sort_group<1>(S, g); break;
-		case 2: verus_sort_group<2>(S, g); break;
-		case 3: verus_sort_group<3>(S, g); break;
-		case 4: verus_sort_group<4>(S, g); break;
-		case 5: verus_sort_group<5>(S, g); break;
-		case 6: verus_sort_group<6>(S, g); break;
-		default: verus_sort_group<7>(S, g); break;
+		case 0: verus_sort_group<0, PF>(S, g); break;
+		case 1: verus_sort_group<1, PF>(S, g); break;
+		case 2: verus_sort_group<2, PF>(S, g); break;
+		case 3: verus_sort_group<3, PF>(S, g); break;
+		case 4: verus_sort_group<4, PF>(S, g); break;
+		case 5: verus_sort_group<5, PF>(S, g); break;
+		case 6: verus_sort_group<6, PF>(S, g); break;
+		default: verus_sort_group<7, PF>(S, g); break;
 		}
 		if (S->cnt[8] && cb(ctx)) return;
 		c = nc; g = ng;
 	}
+}
+/* prefetch != 0: the two key words of a hash's next round are prefetched when its round ends */
+void verus_sort_run(struct verus_sort *S, int (*cb)(void *), void *ctx, int prefetch)
+{
+	if (prefetch) verus_sort_run_t<1>(S, cb, ctx); else verus_sort_run_t<0>(S, cb, ctx);
 }
 #ifdef VERUS_FUSE
 /* variant x2fuse: two lanes with ONE 64-way jump per round on the pair (case of lane A, case of lane B).

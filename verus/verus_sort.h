@@ -37,7 +37,7 @@ struct verus_sort {
 
 /* Runs steps until cb returns non-zero. cb is called whenever list 8 is not empty: it must take every hash off
  * it (verus_sort_finish), and either restart it (verus_sort_start) or stop the run. */
-void verus_sort_run(struct verus_sort *S, int (*cb)(void *), void *ctx);
+void verus_sort_run(struct verus_sort *S, int (*cb)(void *), void *ctx, int prefetch);
 uint64_t verus_sort_reduce(const __m128i *acc);
 
 /* start hash `id` on its (clean) key with these 15 nonce bytes and queue it */

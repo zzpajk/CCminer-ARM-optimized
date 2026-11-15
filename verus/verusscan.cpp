@@ -588,6 +588,7 @@ static int verus_sort_cb(void *p)
 	}
 	return stop;
 }
+static int verus_sort_env = -2;   /* VERUS_SORT: 1 = on, 2 = on without key prefetch */
 static __attribute__((noinline)) void verus_scan_sorted(struct verus_scan_ctx *c)
 {
 	enum { NL = VERUS_SORT_LANES, KW = VERUS_KEY_SIZE128 + 8 };
@@ -606,15 +607,14 @@ static __attribute__((noinline)) void verus_scan_sorted(struct verus_scan_ctx *c
 		s->nonce = q.next++; ((uint32_t *)(&n15[11]))[0] = s->nonce;
 		verus_sort_start(&q.S, l, n15);
 	}
-	verus_sort_run(&q.S, verus_sort_cb, &q);
+	verus_sort_run(&q.S, verus_sort_cb, &q, verus_sort_env == 1);
 }
 static bool verus_sort_on(int thr_id)
 {
-	static int env = -2;
-	if (env == -2) { const char *e = getenv("VERUS_SORT"); env = (e && e[0] == '1' && !e[1]) ? 1 : 0; }
+	if (verus_sort_env == -2) { const char *e = getenv("VERUS_SORT"); verus_sort_env = (e && (e[0] == '1' || e[0] == '2') && !e[1]) ? e[0] - '0' : 0; }
 	static __thread int logged = 0;
-	if (env == 1 && !logged) { logged = 1; applog(LOG_INFO, "Verus thread %d: VERUS_SORT=1, %d hashes in flight, rounds grouped by case", thr_id, VERUS_SORT_LANES); }
-	return env == 1;
+	if (verus_sort_env > 0 && !logged) { logged = 1; applog(LOG_INFO, "Verus thread %d: VERUS_SORT=%d, %d hashes in flight, rounds grouped by case", thr_id, verus_sort_env, VERUS_SORT_LANES); }
+	return verus_sort_env > 0;
 }
 #endif
 
