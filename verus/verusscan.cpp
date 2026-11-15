@@ -388,6 +388,10 @@ static int verus_sel_for_cpu(int cpu)
 		 * Measured and not taken on the M2: three lanes (VERUS_X3=1: -1%, L1D misses 0.5 -> 21 per hash,
 		 * three key copies do not fit), batched restore (bit 18: neutral), 16-bit journal (bit 17: -3.5%). */
 		if (g_impl[cpu] == 0x53 && g_part[cpu] == 0x001) sel |= 4096;
+		/* Mongoose M3 / M5: lean without fold (2467), run with three lanes (verus_x3). 20-min sustained all-core
+		 * 2026-11-15, x3 419 -> x3 2467: S9 (M3) 6.363 -> 6.411 MH/s (+0.7%), S20 (M5) 7.209 -> 7.242 (+0.4%).
+		 * The M4 (S10) tied (7.005 / 7.016) and keeps 419. */
+		if (g_impl[cpu] == 0x53 && (g_part[cpu] == 0x002 || g_part[cpu] == 0x004)) sel |= 2048;
 		/* Qualcomm Kryo Gold cores report implementer 0x51 but are Cortex derivatives: use the path of the
 		 * Cortex core they are built on. NOT measured yet (no such phone tested): 0x800 Kryo 280 Gold (A73,
 		 * SD835), 0x802 Kryo 385 Gold (A75, SD845 / 7xx), 0x804 Kryo 485 Gold (A76, SD855 / 7xx). */
