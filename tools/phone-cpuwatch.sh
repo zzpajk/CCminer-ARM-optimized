@@ -23,13 +23,14 @@ case "$CAPMHZ" in *[!0-9]*) echo "bad cap value $CAPMHZ"; exit 2;; esac
 case "$STS" in ''|*[!0-9]*|0) STS=300;; esac
 case "$MIN" in ''|*[!0-9]*) echo "minutes must be a number"; exit 2;; esac
 MOPTS=(); WANTBIN=""
-POOL=""; WORKER=""
+POOL=""; WORKER=""; STUNE=0
 for o in "$@"; do
 	case "$o" in
 		VERUS_SELMAP=*)
 			case "${o#*=}" in ''|*[!0-9a-fA-F:=,]*) echo "bad value in $o"; exit 2;; esac; export "$o";;
 		VERUS_SEL=*|VERUS_SEL1=*|VERUS_LANES=*|VERUS_PRE1=*|VERUS_X3=*|VERUS_SORT=*)
 			case "${o#*=}" in ''|*[!0-9]*) echo "bad value in $o"; exit 2;; esac; export "$o";;
+		stune) STUNE=1;;   # apply the scheduler settings of github.com/iSonik/S9-Tweak- (root; restored at the end)
 		pool=*) # a real pool session: ONLY the user's own local stratum, at the user's explicit request (2026-11-15)
 			[ "${o#pool=}" = "stratum+tcp://192.168.1.12:8000" ] || { echo "pool not allowed: ${o#pool=}"; exit 2; }; POOL="${o#pool=}";;
 		worker=*) case "${o#worker=}" in ''|*[!A-Za-z0-9.]*) echo "bad worker name"; exit 2;; esac; WORKER="${o#worker=}";;
@@ -110,9 +111,22 @@ fi
 MP=$!
 cleanup() { kill "$MP" 2>/dev/null; wait "$MP" 2>/dev/null
 	if [ "$MODE" = widen ] && [ -n "$ORIG" ]; then timeout 15 "$SU" -c "echo $ORIG > $F" </dev/null && echo "$(ts) foreground cpuset restored to $ORIG"; fi
+	if [ "$STUNE" = 1 ] && [ -s "$ST_SAVE" ]; then
+		timeout 30 "$SU" -c "while IFS== read f old new; do echo \$old > \$f; done < $ST_SAVE" </dev/null 2>/dev/null; echo "$(ts) stune values restored"; rm -f "$ST_SAVE"; fi
 	for c in $CAPPED; do timeout 15 "$SU" -c "cat $C/$c/cpufreq/cpuinfo_max_freq > $C/$c/cpufreq/scaling_max_freq" </dev/null; done
 	[ -n "$CAPPED" ] && echo "$(ts) clock cap removed:$CAPPED (now $(for c in $CAPPED; do printf '%s ' $(( $(cat $C/$c/cpufreq/scaling_max_freq) / 1000 )); done)MHz)"; }
 trap cleanup EXIT
+# "stune": the echo lines of github.com/iSonik/S9-Tweak-/Script (schedtune boosts, cpusets, load balance), written
+# as root; the old values are saved and written back at the end. Paths a kernel does not have are skipped.
+ST_SAVE="$HOME/verus-runs/.stune-old"
+ST_LIST="/dev/stune/background/schedtune.boost=5 /dev/stune/background/schedtune.prefer_idle=1 /dev/stune/foreground/schedtune.boost=15 /dev/stune/foreground/schedtune.prefer_idle=1 /dev/stune/foreground/schedtune.prefer_perf=0 /dev/stune/rt/schedtune.boost=100 /dev/stune/rt/schedtune.prefer_idle=0 /dev/stune/top-app/schedtune.boost=100 /dev/stune/top-app/schedtune.prefer_idle=1 /dev/stune/top-app/schedtune.prefer_perf=0 /dev/stune/top-app/cpus=0-7 /dev/stune/schedtune.boost=0 /dev/stune/schedtune.prefer_idle=1 /dev/stune/schedtune.prefer_perf=0 /dev/cpuset/system-background/cpus=0-3 /dev/cpuset/background/cpus=0-3 /dev/cpuset/top-app/cpus=0-7 /dev/cpuset/cpus=0-7 /dev/cpuset/restricted/cpus=0-7 /dev/cpuset/sched_load_balance=1 /dev/cpuset/system-background/sched_load_balance=1 /dev/cpuset/background/sched_load_balance=1 /dev/cpuset/foreground/sched_load_balance=1 /dev/cpuset/top-app/sched_load_balance=1 /dev/cpuset/restricted/sched_load_balance=1"
+if [ "$STUNE" = 1 ]; then
+	[ -n "$SU" ] || { echo "stune needs root (Android su)"; exit 1; }
+	timeout 30 "$SU" -c "for kv in $ST_LIST; do f=\${kv%%=*}; [ -e \$f ] && echo \$f=\$(cat \$f)=\${kv#*=}; done" </dev/null > "$ST_SAVE" 2>/dev/null
+	timeout 30 "$SU" -c "for kv in $ST_LIST; do f=\${kv%%=*}; [ -e \$f ] && echo \${kv#*=} > \$f; done" </dev/null 2>&1 | head -5
+	echo "$(ts) stune applied (path=old=new): $(tr '\n' ' ' < "$ST_SAVE" | sed 's#/dev/##g')"
+	echo "$(ts) stune read back: $(timeout 30 "$SU" -c "for kv in $ST_LIST; do f=\${kv%%=*}; [ -e \$f ] && printf '%s ' \$(cat \$f); done" </dev/null 2>/dev/null)"
+fi
 sleep 5
 echo "$(ts) miner pid $MP, $NCPU threads; sampling every 10 s for $MIN min, status every $STS s"
 t_start=$(date +%s); sum=0; cnt=0
