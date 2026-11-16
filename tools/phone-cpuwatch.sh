@@ -56,6 +56,17 @@ fi
 NCPU=$(grep -c ^processor /proc/cpuinfo); ALL=$(cat /sys/devices/system/cpu/present 2>/dev/null || echo "0-$((NCPU-1))")
 ts() { date '+%F %T'; }
 C=/sys/devices/system/cpu
+# CPU time each miner thread got since the previous call, as "lastcpu:percent of one core", busiest first.
+# A worker pinned to a core that shows ~50% is being held back by the kernel (idle injection, core sparing).
+TL_PREV="$HOME/verus-runs/.tload"; rm -f "$TL_PREV" "$TL_PREV.t"
+tload() {
+	local now cur TL_T; now=$(date +%s); TL_T=$(cat "$TL_PREV.t" 2>/dev/null || echo 0); cur=$(for f in /proc/$MP/task/*/stat; do awk '{n = split($0, a, ") "); split(a[n], b, " "); print $1, b[37], b[12] + b[13]}' "$f" 2>/dev/null; done)
+	if [ -f "$TL_PREV" ] && [ "$TL_T" -gt 0 ] && [ "$now" -gt "$TL_T" ]; then
+		echo "$cur" | awk -v dt=$((now - TL_T)) -v hz="$(getconf CLK_TCK 2>/dev/null || echo 100)" 'NR == FNR { p[$1] = $3; next } ($1 in p) { printf "%s:%.0f\n", $2, 100 * ($3 - p[$1]) / hz / dt }' "$TL_PREV" - | sort -t: -k2,2nr | head -10 | tr '\n' ' '
+	fi
+	echo "$cur" > "$TL_PREV"; echo "$now" > "$TL_PREV.t"
+}
+
 freqs() { local o="" c; for c in $C/cpu[0-9]*; do o="$o $(( $(cat $c/cpufreq/scaling_cur_freq 2>/dev/null || echo 0) / 1000 ))"; done; echo "${o# }"; }
 caps() { local o="" c mx sm; for c in $C/cpu[0-9]*; do mx=$(cat $c/cpufreq/cpuinfo_max_freq 2>/dev/null); sm=$(cat $c/cpufreq/scaling_max_freq 2>/dev/null)
 	[ -n "$mx" ] && [ -n "$sm" ] && [ "$sm" -lt "$mx" ] && o="$o ${c##*/}:$((sm/1000))/$((mx/1000))"; done; echo "${o# }"; }
@@ -124,7 +135,7 @@ while [ "$(date +%s)" -lt "$end" ] && kill -0 "$MP" 2>/dev/null; do
 		[ -n "$POOL" ] && hr="$hr, $(grep -oE 'accepted [0-9]+/[0-9]+, not sent [0-9]+' "$LOG" | tail -1)"
 		if [ $(( $(date +%s) - t_start )) -ge 300 ] && [ -n "$hr" ]; then
 			sum=$(awk -v a="$sum" -v b="$(echo "$hr" | awk '{print $2}')" 'BEGIN {print a + b}'); cnt=$((cnt + 1)); fi
-		echo "$(ts) status: ${hr:-no total yet} | MHz $(freqs) | caps $(caps | sed 's/^$/none/') | $(temps) | $cur | threads on $on"
+		echo "$(ts) status: ${hr:-no total yet} | MHz $(freqs) | caps $(caps | sed 's/^$/none/') | $(temps) | $cur | threads on $on | cpu time per thread since the last status (cpu:percent) $(tload)"
 		nextst=$(( $(date +%s) + STS ))
 	fi
 	sleep 10
