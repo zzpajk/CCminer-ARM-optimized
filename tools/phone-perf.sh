@@ -75,7 +75,7 @@ if [ "$MODE" = ablate ]; then
 	echo "$(ts) building the ablation harness from $SELS: $(clang --version | head -1) $JT"
 	clang $CF -c verus/haraka.c -o "$AS/hk.o" && clang $CF -c verus/haraka_portable.c -o "$AS/hkp.o" || { echo "haraka build failed"; exit 1; }
 	for m in full fix; do
-		f="-DVERUS_X2 -DVERUS_PRISTINE -DVERUS_ABL_LANES_EXTRA"; [ $m = fix ] && f="$f -DVERUS_ABL_SWITCH_FIXED"
+		f="-DVERUS_X2 -DVERUS_ALL_VARIANTS -DVERUS_PRISTINE -DVERUS_ABL_LANES_EXTRA"; [ $m = fix ] && f="$f -DVERUS_ABL_SWITCH_FIXED"
 		clang++ $CF $JT -std=gnu++11 $f -c verus/verus_clhash_portable.cpp -o "$AS/cl-$m.o" 2>"$AS/err.txt" || { echo "clhash build failed ($m)"; tail -5 "$AS/err.txt"; exit 1; }
 		for n in 2 3 4 6; do
 			clang++ $CF $JT -std=gnu++11 $f -DABL_LANES=$n -DABL_SEL=419 tests/verus_ablate.cpp "$AS/cl-$m.o" "$AS/hk.o" "$AS/hkp.o" -o "$AS/abl-$m-$n" 2>"$AS/err.txt" || { echo "harness build failed ($m $n)"; tail -5 "$AS/err.txt"; exit 1; }

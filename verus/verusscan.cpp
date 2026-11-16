@@ -312,8 +312,14 @@ static void verus_scan_cpuinfo()
  * case 0x14 (x2sel3). Bit 16 (light merge of cases 0/4/8/0x1c) and bit 32 (branch-free case 0x0c) are
  * selectable for testing: VERUS_SEL=16, 32, 48 (on top of x2) or 19, 35, 51 (on top of sel2). */
 /* the VERUS_SEL values the dispatch switch in verus_scan_lanes' caller knows */
+/* The default build only contains the variants that are a default on some core (a full build needs ~2.4 GB to
+ * compile, which stalls 4 GB phones); -DVERUS_ALL_VARIANTS (CI, tools/termux-install.sh --all-variants) builds
+ * every measured variant for VERUS_SEL / VERUS_SELMAP / VERUS_SEL1 / VERUS_SORT comparisons. */
 static inline bool verus_sel_ok(long x)
 {
+#ifndef VERUS_ALL_VARIANTS
+	return x == 384 || x == 419 || x == 483 || x == 7552 || x == 2467;
+#endif
 	return x == 3520 || x == 2467 || x == 3491 || x == 0 || x == 1 || x == 2 || x == 3 || x == 4 || x == 5 || x == 7 || x == 8 || x == 9 || x == 11 || x == 16 || x == 32 || x == 48 || x == 19 || x == 35 || x == 51 || x == 64 || x == 67 || x == 99 || x == 39 || x == 128 || x == 131 || x == 163 || x == 227 || x == 256 || x == 259 || x == 291 || x == 355 || x == 384 || x == 387 || x == 419 || x == 483 || x == 512 || x == 515 || x == 547 || x == 640 || x == 643 || x == 675 || x == 768 || x == 771 || x == 803 || x == 896 || x == 899 || x == 931 || x == 1408 || x == 1411 || x == 1443 || x == 2432 || x == 3456 || x == 5504 || x == 7552 || x == 11648 || x == 28032 || x == 44416 || x == 77184 || x == 93568 || x == 109952 || x == 265600 || x == 134528 || x == 396672;
 }
 
@@ -542,6 +548,7 @@ static __attribute__((noinline)) void verus_scan_lanes(struct verus_scan_ctx *c)
 	} while (!work_restart[c->thr_id].restart);
 }
 
+#ifdef VERUS_ALL_VARIANTS
 /* VERUS_SORT=1 (experimental): 32 hashes in flight, rounds grouped by case (verus/verus_sort.h). Hashes still
  * in flight when the scan ends are dropped (at most 32 nonces per call). */
 struct verus_sort_scan {
@@ -616,6 +623,9 @@ static bool verus_sort_on(int thr_id)
 	if (verus_sort_env > 0 && !logged) { logged = 1; applog(LOG_INFO, "Verus thread %d: VERUS_SORT=%d, %d hashes in flight, rounds grouped by case", thr_id, verus_sort_env, VERUS_SORT_LANES); }
 	return verus_sort_env > 0;
 }
+#else
+static inline bool verus_sort_on(int) { return false; }
+#endif
 #endif
 
 extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce, unsigned long *hashes_done)
@@ -710,6 +720,7 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 			};
 		if (c.pristine && verus_sort_on(thr_id)) sel = -7;
 		switch (sel) {
+#ifdef VERUS_ALL_VARIANTS
 		case -7: verus_scan_sorted(&c); break;
 		case 396672: verus_scan_lanes<396672>(&c); break;
 		case 265600: if (verus_x3()) verus_scan_lanes<265600, 3>(&c); else verus_scan_lanes<265600>(&c); break;
@@ -720,10 +731,14 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 		case 44416: verus_scan_lanes<44416>(&c); break;
 		case 28032: verus_scan_lanes<28032>(&c); break;
 		case 11648: verus_scan_lanes<11648>(&c); break;
+#endif
 		case 7552: verus_scan_lanes<7552>(&c); break;
+#ifdef VERUS_ALL_VARIANTS
 		case 5504: verus_scan_lanes<5504>(&c); break;
 		case 3520: verus_scan_lanes<3520>(&c); break;
+#endif
 		case 2467: if (verus_x3()) verus_scan_lanes<2467, 3>(&c); else verus_scan_lanes<2467>(&c); break;
+#ifdef VERUS_ALL_VARIANTS
 		case 3491: verus_scan_lanes<3491>(&c); break;
 		case 3456: if (verus_x3()) verus_scan_lanes<3456, 3>(&c); else verus_scan_lanes<3456>(&c); break;
 		case 2432: verus_scan_lanes<2432>(&c); break;
@@ -742,10 +757,14 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 		case 547: verus_scan_lanes<547>(&c); break;
 		case 515: verus_scan_lanes<515>(&c); break;
 		case 512: verus_scan_lanes<512>(&c); break;
+#endif
 		case 483: verus_scan_lanes<483>(&c); break;
 		case 419: if (verus_x3()) verus_scan_lanes<419, 3>(&c); else verus_scan_lanes<419>(&c); break;
+#ifdef VERUS_ALL_VARIANTS
 		case 387: verus_scan_lanes<387>(&c); break;
+#endif
 		case 384: verus_scan_lanes<384>(&c); break;
+#ifdef VERUS_ALL_VARIANTS
 		case 355: verus_scan_lanes<355>(&c); break;
 		case 291: verus_scan_lanes<291>(&c); break;
 		case 259: verus_scan_lanes<259>(&c); break;
@@ -773,6 +792,7 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 		case 1:  verus_scan_lanes<1>(&c); break;
 		case 2:  verus_scan_lanes<2>(&c); break;
 		case 3:  verus_scan_lanes<3>(&c); break;
+#endif
 		default: verus_scan_lanes<0>(&c); break;
 		}
 		goto out;
@@ -806,11 +826,16 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 			struct verus_scan_ctx c = { work, thr_id, max_nonce, hashes_done, nonce_buf, nonceSpace, full_data, sol_data,
 				Htarg, vhash, data_key, fixrand, fixrandex, data_key_prand, data_key_prandex, blockhash_half, tv_start, pristine_key };
 			switch (use1) {
+#ifdef VERUS_ALL_VARIANTS
 			case 306304: verus_scan_lanes<306304, 1>(&c); break;
 			case 265344: verus_scan_lanes<265344, 1>(&c); break;
+#endif
 			case 396416: verus_scan_lanes<396416, 1>(&c); break;
+#ifdef VERUS_ALL_VARIANTS
 			case 134272: verus_scan_lanes<134272, 1>(&c); break;
+#endif
 			case 263296: verus_scan_lanes<263296, 1>(&c); break;
+#ifdef VERUS_ALL_VARIANTS
 			case 3264: verus_scan_lanes<3264, 1>(&c); break;
 			case 396480: verus_scan_lanes<396480, 1>(&c); break;
 			case 44160: verus_scan_lanes<44160, 1>(&c); break;
@@ -831,6 +856,7 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 			case 224: verus_scan_lanes<224, 1>(&c); break;
 			case 640: verus_scan_lanes<640, 1>(&c); break;
 			case 672: verus_scan_lanes<672, 1>(&c); break;
+#endif
 			default:  verus_scan_lanes<128, 1>(&c); break;
 			}
 			goto out;

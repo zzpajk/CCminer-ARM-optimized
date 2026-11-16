@@ -30,9 +30,9 @@ jobs:
           # the 8-way case switch of the hash into a compare tree); the -mllvm option must reach the LTO link
           for v in baseline pristine x2 x2sel2 x2percore x2percorep baselinejt4 x2percorepjt4; do
             jt=""; case "$v" in *jt4) jt=4; v0=${v%jt4};; *) v0=$v;; esac
-            case "$v0" in baseline) fl="";; zipmix) fl="-DVERUS_ZIPMIX";; x2) fl="-DVERUS_X2";;
-              x3) fl="-DVERUS_X2 -DVERUS_LANES=3";; x4) fl="-DVERUS_X2 -DVERUS_LANES=4";;
-              x2auto) fl="-DVERUS_X2 -DVERUS_AUTO";; x2fuse) fl="-DVERUS_X2 -DVERUS_FUSE";; x2sel) fl="-DVERUS_X2 -DVERUS_SEL14";; x2sel2) fl="-DVERUS_X2 -DVERUS_SEL14 -DVERUS_SEL18";; x2percore) fl="-DVERUS_X2 -DVERUS_AUTO -DVERUS_PERCORE";; x2sel3) fl="-DVERUS_X2 -DVERUS_SEL3";;
+            case "$v0" in baseline) fl="";; zipmix) fl="-DVERUS_ZIPMIX";; x2) fl="-DVERUS_X2 -DVERUS_ALL_VARIANTS";;
+              x3) fl="-DVERUS_X2 -DVERUS_ALL_VARIANTS -DVERUS_LANES=3";; x4) fl="-DVERUS_X2 -DVERUS_ALL_VARIANTS -DVERUS_LANES=4";;
+              x2auto) fl="-DVERUS_X2 -DVERUS_ALL_VARIANTS -DVERUS_AUTO";; x2fuse) fl="-DVERUS_X2 -DVERUS_ALL_VARIANTS -DVERUS_FUSE";; x2sel) fl="-DVERUS_X2 -DVERUS_ALL_VARIANTS -DVERUS_SEL14";; x2sel2) fl="-DVERUS_X2 -DVERUS_ALL_VARIANTS -DVERUS_SEL14 -DVERUS_SEL18";; x2percore) fl="-DVERUS_X2 -DVERUS_ALL_VARIANTS -DVERUS_AUTO -DVERUS_PERCORE";; x2sel3) fl="-DVERUS_X2 -DVERUS_ALL_VARIANTS -DVERUS_SEL3";;
               pristine) fl="-DVERUS_PRISTINE";; x2percorep) fl="-DVERUS_X2 -DVERUS_AUTO -DVERUS_PERCORE -DVERUS_PRISTINE";; esac
             rm -rf "b-$v"; mkdir "b-$v"
             git ls-files -z | grep -zv '\.o$' | xargs -0 cp --parents -t "b-$v"
@@ -52,58 +52,58 @@ jobs:
           grep -q PASS difftest.txt
           clang -O2 -march=armv8-a+crypto -fno-strict-aliasing -I. -Iverus -c verus/haraka.c -o hk.o
           clang -O2 -march=armv8-a+crypto -fno-strict-aliasing -I. -Iverus -c verus/haraka_portable.c -o hkp.o
-          clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -I. -Iverus \
+          clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_ALL_VARIANTS -I. -Iverus \
             -c verus/verus_clhash_portable.cpp -o clx2.o
           for n in 2 3 4; do
-            clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_LANES=$n -I. -Iverus \
+            clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_ALL_VARIANTS -DVERUS_LANES=$n -I. -Iverus \
               tests/verus_x2test.cpp clx2.o hk.o hkp.o -o x2test$n
             ./x2test$n 100000 | tee -a difftest.txt
           done
-          clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -I. -Iverus \
+          clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_ALL_VARIANTS -I. -Iverus \
             tests/verus_sorttest.cpp clx2.o hk.o hkp.o -o sorttest
           timeout 300 ./sorttest 300000 | tee -a difftest.txt
           timeout 300 ./sorttest 300000 0 | tee -a difftest.txt
           [ "$(grep -c 'sorttest.*PASS' difftest.txt)" = 2 ]
-          clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_FUSE -I. -Iverus \
+          clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_ALL_VARIANTS -DVERUS_FUSE -I. -Iverus \
             -c verus/verus_clhash_portable.cpp -o clfuse.o
-          clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_FUSE -I. -Iverus \
+          clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_ALL_VARIANTS -DVERUS_FUSE -I. -Iverus \
             tests/verus_x2test.cpp clfuse.o hk.o hkp.o -o x2testfuse
           ./x2testfuse 300000 | sed 's/x2test/x2test fuse/' | tee -a difftest.txt
-          clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_SEL14 -I. -Iverus \
+          clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_ALL_VARIANTS -DVERUS_SEL14 -I. -Iverus \
             -c verus/verus_clhash_portable.cpp -o clsel.o
-          clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_SEL14 -I. -Iverus \
+          clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_ALL_VARIANTS -DVERUS_SEL14 -I. -Iverus \
             tests/verus_x2test.cpp clsel.o hk.o hkp.o -o x2testsel
           ./x2testsel 300000 | sed 's/x2test/x2test sel/' | tee -a difftest.txt
-          clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_SEL14 -DVERUS_SEL18 -I. -Iverus \
+          clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_ALL_VARIANTS -DVERUS_SEL14 -DVERUS_SEL18 -I. -Iverus \
             -c verus/verus_clhash_portable.cpp -o clsel2.o
-          clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_SEL14 -DVERUS_SEL18 -I. -Iverus \
+          clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_ALL_VARIANTS -DVERUS_SEL14 -DVERUS_SEL18 -I. -Iverus \
             tests/verus_x2test.cpp clsel2.o hk.o hkp.o -o x2testsel2
           ./x2testsel2 300000 | sed 's/x2test/x2test sel2/' | tee -a difftest.txt
-          clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_SEL3 -I. -Iverus \
+          clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_ALL_VARIANTS -DVERUS_SEL3 -I. -Iverus \
             -c verus/verus_clhash_portable.cpp -o clsel3.o
-          clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_SEL3 -I. -Iverus \
+          clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_ALL_VARIANTS -DVERUS_SEL3 -I. -Iverus \
             tests/verus_x2test.cpp clsel3.o hk.o hkp.o -o x2testsel3
           ./x2testsel3 300000 | sed 's/x2test/x2test sel3/' | tee -a difftest.txt
-          clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_FUSE64 -I. -Iverus \
+          clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_ALL_VARIANTS -DVERUS_FUSE64 -I. -Iverus \
             -c verus/verus_clhash_portable.cpp -o clf64.o
-          clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_FUSE64 -I. -Iverus \
+          clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_ALL_VARIANTS -DVERUS_FUSE64 -I. -Iverus \
             tests/verus_x2test.cpp clf64.o hk.o hkp.o -o x2testf64
           ./x2testf64 300000 | sed 's/x2test/x2test fuse64+sel2/' | tee -a difftest.txt
           # SEL bit 16 (light merge of cases 0/4/8/0x1c) and bit 32 (branch-free case 0x0c), alone and on top of sel2
           for f in 16 32 48 19 35 51 64 67 99 39 128 131 163 227 256 259 291 355 384 387 419 483 512 515 547 640 643 675 768 771 803 896 899 931 1152 1155 1187 1408 1411 1443 2176 3200 2432 3456 5248 7296 5504 7552 11392 27776 44160 76928 93312 109696 11648 44416 134272 134528 265600 396672 2211 3235 2467 3491 3264 3520; do
-            clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_SEL_FORCE=$f -I. -Iverus \
+            clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_ALL_VARIANTS -DVERUS_SEL_FORCE=$f -I. -Iverus \
               tests/verus_x2test.cpp clx2.o hk.o hkp.o -o x2testsel$f
             ./x2testsel$f 300000 | sed "s/x2test/x2test SEL $f/" | tee -a difftest.txt
           done
           # one lane through the same round code (single-nonce cores, VERUS_SEL1)
           for f in 128 129 130 131 160 163 192 224 640 672 1152 1155 2176 3200 5248 7296 11392 27776 44160 134272 263296 396416 265344 306304 3264 396480; do
-            clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_LANES=1 -DVERUS_SEL_FORCE=$f -I. -Iverus \
+            clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_ALL_VARIANTS -DVERUS_LANES=1 -DVERUS_SEL_FORCE=$f -I. -Iverus \
               tests/verus_x2test.cpp clx2.o hk.o hkp.o -o x2test1sel$f
             ./x2test1sel$f 200000 | sed "s/x2test/x2test 1-lane SEL $f/" | tee -a difftest.txt
           done
           # three lanes with the lean M2 values (VERUS_X3=1 at run time)
           for f in 3456 265600 419 2467; do
-            clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_LANES=3 -DVERUS_SEL_FORCE=$f -I. -Iverus \
+            clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_ALL_VARIANTS -DVERUS_LANES=3 -DVERUS_SEL_FORCE=$f -I. -Iverus \
               tests/verus_x2test.cpp clx2.o hk.o hkp.o -o x2test3sel$f
             ./x2test3sel$f 200000 | sed "s/x2test/x2test 3-lane SEL $f/" | tee -a difftest.txt
           done
@@ -145,9 +145,9 @@ jobs:
           [ "$(grep -cE ' ok|unchanged' api.txt)" = 4 ]
       - name: Selector statistics
         run: |
-          clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_STATS -I. -Iverus \
+          clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_ALL_VARIANTS -DVERUS_STATS -I. -Iverus \
             -c verus/verus_clhash_portable.cpp -o cls.o
-          clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_STATS -I. -Iverus \
+          clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_ALL_VARIANTS -DVERUS_STATS -I. -Iverus \
             tests/verus_stats.cpp cls.o hk.o hkp.o -o vstats
           ./vstats 400000 | tee stats.txt
       - name: Ablation timings (what does each cost?)
@@ -168,7 +168,7 @@ jobs:
           build pristine "-DVERUS_PRISTINE"   # a real variant (correct hashes), timed in the same harness
           # the same ablations on the two-nonce path (x2): what still limits it?
           for a in full:"" nodiv:-DVERUS_ABL_NODIV innerfix:-DVERUS_ABL_INNER_FIXED switchfix:-DVERUS_ABL_SWITCH_FIXED nofix:-DVERUS_ABL_NOFIX noharaka:-DVERUS_ABL_NOHARAKA nomulhrs:-DVERUS_ABL_NOMULHRS; do
-            build "x2${a%%:*}" "-DVERUS_X2 ${a#*:}"
+            build "x2${a%%:*}" "-DVERUS_X2 -DVERUS_ALL_VARIANTS ${a#*:}"
           done
           for r in 1 2 3; do for v in full pristine nodiv innerfix switchfix nofix noharaka nomulhrs all4 x2full x2nodiv x2innerfix x2switchfix x2nofix x2noharaka x2nomulhrs; do
             echo "$v $(./abl-$v 4)" | tee -a ablate.txt; done; done
@@ -212,7 +212,7 @@ jobs:
       - name: Build (normal, PGO-instrumented, PGO-optimised)
         run: |
           set -e
-          FL="-DVERUS_X2 -DVERUS_AUTO -DVERUS_PERCORE -DVERUS_PRISTINE"
+          FL="-DVERUS_X2 -DVERUS_ALL_VARIANTS -DVERUS_AUTO -DVERUS_PERCORE -DVERUS_PRISTINE"
           build() { # dir extra-flags
             rm -rf "$1"; mkdir "$1"
             git ls-files -z | grep -zv '\.o$' | xargs -0 cp --parents -t "$1"
@@ -273,7 +273,7 @@ jobs:
         run: |
           set -e
           exec > >(tee gcc.log) 2>&1
-          FL="-DVERUS_X2 -DVERUS_AUTO -DVERUS_PERCORE -DVERUS_PRISTINE"
+          FL="-DVERUS_X2 -DVERUS_ALL_VARIANTS -DVERUS_AUTO -DVERUS_PERCORE -DVERUS_PRISTINE"
           prep() { rm -rf "$1"; mkdir "$1"; git ls-files -z | grep -zv '\.o$' | xargs -0 cp --parents -t "$1"
                    ( cd "$1"; find . -name '*.o' -delete; rm -f ccminer *.opt.yaml config.status ); }
           prep b-clang; ( cd b-clang && ./configure.sh >/dev/null && make -j"$(nproc)" CPPFLAGS="$FL" >/dev/null 2>&1 )
@@ -288,8 +288,8 @@ jobs:
           ls -la b-clang/ccminer b-gcc/ccminer
           G="-O2 -march=armv8-a+crypto -fno-strict-aliasing -flax-vector-conversions -I. -Iverus"
           gcc $G -c verus/haraka.c -o hk.o; gcc $G -c verus/haraka_portable.c -o hkp.o
-          g++ $G -std=gnu++11 -DVERUS_X2 -DVERUS_SEL14 -DVERUS_SEL18 -c verus/verus_clhash_portable.cpp -o cl2.o
-          g++ $G -std=gnu++11 -DVERUS_X2 -DVERUS_SEL14 -DVERUS_SEL18 tests/verus_x2test.cpp cl2.o hk.o hkp.o -o x2test
+          g++ $G -std=gnu++11 -DVERUS_X2 -DVERUS_ALL_VARIANTS -DVERUS_SEL14 -DVERUS_SEL18 -c verus/verus_clhash_portable.cpp -o cl2.o
+          g++ $G -std=gnu++11 -DVERUS_X2 -DVERUS_ALL_VARIANTS -DVERUS_SEL14 -DVERUS_SEL18 tests/verus_x2test.cpp cl2.o hk.o hkp.o -o x2test
           ./x2test 200000 | sed 's/^/gcc /' | tee eq.txt
           g++ $G -std=gnu++11 -c verus/verus_clhash_portable.cpp -o cl.o
           g++ $G -std=gnu++11 tests/verus_pristinetest.cpp cl.o hk.o hkp.o -o pristinetest

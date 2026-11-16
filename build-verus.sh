@@ -14,7 +14,8 @@
 # Measured on Exynos phones (all cores, vs the unmodified miner): S8 +13%, S9 +20%, S10 +21%, S20 +17..19%,
 # S21 +12%, before the clang 17 gain. No dev fee, no donation code, no hardcoded pool or wallet.
 #
-# Usage:   bash build-verus.sh [-j JOBS] [--system-clang]
+# Usage:   bash build-verus.sh [-j JOBS] [--system-clang] [--all-variants]
+#          --all-variants also builds every measured test variant (VERUS_SEL etc.); needs ~2.5 GB of free RAM
 # Output:  ./ccminer-verus   (the source tree itself is left untouched; the build happens in a copy)
 # Run:     ./ccminer-verus -a verus -o stratum+tcp://YOUR_POOL:PORT -u YOUR_WALLET.WORKER -p x -t 8
 # Check:   ./ccminer-verus -a verus --benchmark -t 8 --time-limit 20
@@ -26,8 +27,8 @@
 
 set -u
 cd "$(dirname "$0")" || exit 1
-SRC=$(pwd); WORK="${VERUS_WORK:-$HOME/ccminer-verus-build}"; JOBS=""; WANT=17; SYSCLANG=0
-while [ $# -gt 0 ]; do case "$1" in -j) JOBS="$2"; shift 2;; --system-clang) SYSCLANG=1; shift;; *) echo "unknown option: $1"; exit 2;; esac; done
+SRC=$(pwd); WORK="${VERUS_WORK:-$HOME/ccminer-verus-build}"; JOBS=""; WANT=17; SYSCLANG=0; ALLV=""
+while [ $# -gt 0 ]; do case "$1" in -j) JOBS="$2"; shift 2;; --system-clang) SYSCLANG=1; shift;; --all-variants) ALLV=" -DVERUS_ALL_VARIANTS"; shift;; *) echo "unknown option: $1"; exit 2;; esac; done
 have() { command -v "$1" >/dev/null 2>&1; }
 SUDO=""; [ "$(id -u)" -ne 0 ] && have sudo && SUDO="sudo"
 
@@ -111,7 +112,7 @@ B="$WORK/build"; rm -rf "$B"; mkdir -p "$B"
   { if [ -n "$CCD" ]; then sed -i "s#CXX=clang++ CC=clang#CXX=$CCD/clang++ CC=$CCD/clang#" configure.sh; fi; true; } && \
   { if [ -n "$RMF" ]; then echo "$RMF" | tr '|' '\n' | while IFS= read -r f; do sed -i "s# $f##g" configure.sh; done; fi; true; } && \
   { if [ -n "$JT" ]; then sed -i "s#^extracflags=\"#extracflags=\"-mllvm $JT #" configure.sh; sed -i "s#LDFLAGS=\"-v -flto#LDFLAGS=\"-v -flto -Wl,-mllvm,$JT#" configure.sh; fi; true; } && \
-  sh ./configure.sh && make -j"$JOBS" CPPFLAGS="-DVERUS_X2 -DVERUS_AUTO -DVERUS_PERCORE -DVERUS_PRISTINE" ) >"$WORK/build.log" 2>&1
+  sh ./configure.sh && make -j"$JOBS" CPPFLAGS="-DVERUS_X2 -DVERUS_AUTO -DVERUS_PERCORE -DVERUS_PRISTINE$ALLV" ) >"$WORK/build.log" 2>&1
 if [ ! -x "$B/ccminer" ] || ! grep -q 'baseline+x2percore+pristine' "$B/ccminer"; then
   echo "BUILD FAILED. Last lines of $WORK/build.log:"; tail -25 "$WORK/build.log"; exit 1
 fi
