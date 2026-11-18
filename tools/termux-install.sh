@@ -1,12 +1,12 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # termux-install.sh - set up Termux and build (or update) the newest Verus ccminer from this fork.
 #
-#   curl -fsSL https://raw.githubusercontent.com/zzpajk/CCminer-ARM-optimized/variants/tools/termux-install.sh -o ~/termux-install.sh
+#   curl -fsSL https://raw.githubusercontent.com/zzpajk/ccminer-ARM-percore/main/tools/termux-install.sh -o ~/termux-install.sh
 #   bash ~/termux-install.sh
 #
 # 1. updates Termux packages (answers all prompts, keeps existing config files)
 # 2. installs git, screen and the build dependencies
-# 3. clones github.com/zzpajk/CCminer-ARM-optimized (branch variants) into ~/ccminer,
+# 3. clones github.com/zzpajk/ccminer-ARM-percore (branch main) into ~/ccminer,
 #    or, if it is already there, updates it to the newest commit
 # 4. builds with build-verus.sh -> ~/ccminer/ccminer-verus
 #    (the previous binary is kept as ccminer-verus.old)
@@ -15,11 +15,11 @@
 # Run it again at any time to update and rebuild. Options:
 #   --no-upgrade   skip "pkg upgrade" (faster when the packages were updated recently)
 #   --no-build     only install packages and update the source
-#   -b BRANCH      build another branch (default: variants)
+#   -b BRANCH      build another branch (default: main; "variants" = the test branch)
 # Nothing is started, no pool or wallet is configured.
 set -u
-REPO=https://github.com/zzpajk/CCminer-ARM-optimized.git
-BRANCH=variants; DIR="$HOME/ccminer"; UPGRADE=1; BUILD=1
+REPO=https://github.com/zzpajk/ccminer-ARM-percore.git
+BRANCH=main; DIR="$HOME/ccminer"; UPGRADE=1; BUILD=1
 while [ $# -gt 0 ]; do case "$1" in
 	--no-upgrade) UPGRADE=0; shift;;
 	--no-build) BUILD=0; shift;;

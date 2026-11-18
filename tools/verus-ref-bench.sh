@@ -26,7 +26,7 @@
 #   A compiler variant (-cNN, -gcc) that fails to build is dropped with a note; the run continues.
 #
 # In-order cores (plain loop under x2auto/x2percore): Cortex-A34/A35/A53/A55/A510/A520 and Qualcomm Kryo Silver.
-# Embedded patch = git diff 9ea69fd..d8d896c of github.com/zzpajk/CCminer-ARM-optimized (branch variants).
+# Embedded patch = git diff 9ea69fd..d8d896c of github.com/zzpajk/ccminer-ARM-percore (branch variants).
 #
 # Default plan: for every distinct CPU type in /proc/cpuinfo run 1 thread pinned to one core of that
 # type and N threads pinned to that cluster, then all cores unpinned. (Pinning uses the miner's own

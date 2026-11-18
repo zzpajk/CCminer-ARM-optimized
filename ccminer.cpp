@@ -3754,13 +3754,14 @@ int main(int argc, char *argv[])
 	parse_single_opt('q', argc, argv);
 
 	printf("***************************************************************\n");	
-	printf("*  ccminer CPU: " PACKAGE_VERSION " for Verushash v2.2 based on ccminer   *\n");
+	printf("*  %-59s*\n", "ccminer CPU: " PACKAGE_VERSION " for Verushash v2.2");
 	printf("***************************************************************\n");	
 
         printf("Originally based on Christian Buchner and Christian H. project\n");
         printf("Adapted to Verus by Monkins1010\n");
         printf("Adapted for ARM optimization by Mixed-Nuts\n");
         printf("Adapted and compiled by Oink.vrsc@\n");
+        printf("Per-core tuned by zpajk\n");
         printf("Goto https://wiki.verus.io/#!index.md for mining setup guides. \n");
         printf("Git repo located at: " PACKAGE_URL " \n\n");
 	printf("Verus variant: %s\n\n", VERUS_VARIANT_NAME);

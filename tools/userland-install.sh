@@ -3,21 +3,21 @@
 # from this fork. Also works on any Debian / Ubuntu ARM64 system (Raspberry Pi OS 64-bit, Armbian, ...).
 #
 #   sudo apt-get update && sudo apt-get install -y curl
-#   curl -fsSL https://raw.githubusercontent.com/zzpajk/CCminer-ARM-optimized/variants/tools/userland-install.sh -o ~/userland-install.sh
+#   curl -fsSL https://raw.githubusercontent.com/zzpajk/ccminer-ARM-percore/main/tools/userland-install.sh -o ~/userland-install.sh
 #   bash ~/userland-install.sh
 #
 # 1. installs git and screen
-# 2. clones github.com/zzpajk/CCminer-ARM-optimized (branch variants) into ~/ccminer, or updates it
+# 2. clones github.com/zzpajk/ccminer-ARM-percore (branch main) into ~/ccminer, or updates it
 # 3. builds with build-verus.sh (installs the compiler and libraries it needs) -> ~/ccminer/ccminer-verus
 #    (the previous binary is kept as ccminer-verus.old)
 # 4. writes verus.conf (only if missing), start-ccminer.sh and stop-ccminer.sh into the same folder
 # Run it again at any time to update and rebuild. Options:
 #   --no-build     only install packages and update the source
-#   -b BRANCH      build another branch (default: variants)
+#   -b BRANCH      build another branch (default: main; "variants" = the test branch)
 # Nothing is started, no pool or wallet is configured.
 set -u
-REPO=https://github.com/zzpajk/CCminer-ARM-optimized.git
-BRANCH=variants; DIR="$HOME/ccminer"; BUILD=1
+REPO=https://github.com/zzpajk/ccminer-ARM-percore.git
+BRANCH=main; DIR="$HOME/ccminer"; BUILD=1
 while [ $# -gt 0 ]; do case "$1" in
 	--no-build) BUILD=0; shift;;
 	-b) BRANCH="$2"; shift 2;;

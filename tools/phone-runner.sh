@@ -3,7 +3,7 @@
 #
 # The phone polls the jobs repo (git over SSH with a deploy key that can only reach that one repo), runs
 # each new job for this phone and commits the output back. A job can ONLY run one of the scripts in
-# tools/ of the public fork (github.com/zzpajk/CCminer-ARM-optimized) at a pinned commit, with arguments
+# tools/ of the public fork (github.com/zzpajk/ccminer-ARM-percore) at a pinned commit, with arguments
 # from a fixed character set; nothing from the job file is ever evaluated as shell code.
 #
 #   bash phone-runner.sh setup NAME [DEVICE]   one-time: key, deploy-key check, clone, config, start
@@ -25,7 +25,7 @@
 set -u
 RUNNER_VERSION=1.6.8
 JOBS_REPO="${VERUS_JOBS_REPO:-git@github.com:zzpajk/verus-phone-jobs.git}"
-FORK="${VERUS_FORK:-https://github.com/zzpajk/CCminer-ARM-optimized.git}"
+FORK="${VERUS_FORK:-https://github.com/zzpajk/ccminer-ARM-percore.git}"
 CONF="$HOME/.verus-runner.conf"
 KEY="$HOME/.ssh/verus_jobs_key"
 DIR="$HOME/verus-phone-jobs"

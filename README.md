@@ -1,4 +1,4 @@
-# ccminer for ARM phones (VerusHash)
+# ccminer-ARM-percore
 
 A Verus (VerusHash 2.2) CPU miner for ARM64 phones and boards, tuned per CPU core type.
 
@@ -11,6 +11,8 @@ Based on [Oink70/CCminer-ARM-optimized](https://github.com/Oink70/CCminer-ARM-op
   (big and small cores in the same phone get different code). You do not have to choose anything.
 - Shares are fully checked on the phone before they are sent, so the pool does not get "low difficulty" shares.
 - One-step install scripts for Termux and UserLAnd.
+
+Current version: **3.8.3-4-percore1** (shown when the miner starts).
 
 Measured on our own phones (all 8 cores, 20-minute runs, against the unmodified miner built with the same compiler):
 
@@ -41,7 +43,7 @@ Install Termux from [F-Droid](https://f-droid.org/packages/com.termux/) or its
 Open Termux and paste these two lines:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/zzpajk/CCminer-ARM-optimized/variants/tools/termux-install.sh -o ~/termux-install.sh
+curl -fsSL https://raw.githubusercontent.com/zzpajk/ccminer-ARM-percore/main/tools/termux-install.sh -o ~/termux-install.sh
 bash ~/termux-install.sh
 ```
 
@@ -57,7 +59,7 @@ Then paste:
 
 ```bash
 sudo apt-get update && sudo apt-get install -y curl
-curl -fsSL https://raw.githubusercontent.com/zzpajk/CCminer-ARM-optimized/variants/tools/userland-install.sh -o ~/userland-install.sh
+curl -fsSL https://raw.githubusercontent.com/zzpajk/ccminer-ARM-percore/main/tools/userland-install.sh -o ~/userland-install.sh
 bash ~/userland-install.sh
 ```
 

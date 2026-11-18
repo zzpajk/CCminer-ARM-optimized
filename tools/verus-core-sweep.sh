@@ -38,7 +38,7 @@
 #   -L  extra single-nonce paths for in-order cores, e.g. -L "q128 q160 q192" (qN: VERUS_SEL1=N)
 set -u
 DUR=20; ROUNDS=2; COOL=8; BIN=""; BINP=""; BRANCH="variants"; ALLCORE=0; ALLINORDER=0; XPATHS="x2 sel sel2 fuse fuse2"; PLQ=""; LPATHS=""; CCV=""
-REPO="https://github.com/zzpajk/CCminer-ARM-optimized.git"
+REPO="https://github.com/zzpajk/ccminer-ARM-percore.git"
 while getopts "d:r:c:b:p:B:P:L:C:QaAh" o; do
 	case "$o" in d) DUR=$OPTARG;; r) ROUNDS=$OPTARG;; c) COOL=$OPTARG;; b) BIN=$OPTARG;; p) BINP=$OPTARG;; B) BRANCH=$OPTARG;; P) XPATHS=$OPTARG;; L) LPATHS=$OPTARG;; C) CCV=$OPTARG;; Q) PLQ=1;;
 		a) ALLCORE=1;; A) ALLINORDER=1;; *) sed -n '2,34p' "$0"; exit 0;; esac
