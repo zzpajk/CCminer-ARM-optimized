@@ -192,4 +192,5 @@ build with `--all-variants` to try the experimental ones.
   8-way case switch becomes a branch tree and the miner is 4 to 10% slower.
 - The per-core choices are in `verus/verusscan.cpp` (`verus_sel_for_cpu`), the hash rounds in
   `verus/verus_clhash_portable.cpp`. `tests/` holds the bit-exactness tests that CI runs on ARM64.
-- `tools/` holds the benchmark scripts used for the measurements above.
+- `tools/` holds the two install scripts. The benchmark and phone-test scripts used for the measurements
+  above are on the work branch `variants`.
