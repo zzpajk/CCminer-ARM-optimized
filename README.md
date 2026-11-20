@@ -145,6 +145,44 @@ bash ~/termux-install.sh
 - **"Stratum connection failed".** The pool address or port in `verus.conf` is wrong, or the phone has no
   connection to it.
 
+## How the per-core tuning works
+
+The hash (VerusHash 2.2) runs 32 rounds, and each round jumps to one of eight kinds of work chosen by
+the data itself. Different CPU cores struggle with different parts of that: big cores lose time when
+they guess the next jump wrong, small cores lose time waiting for one step to finish before the next.
+So the miner holds several versions of the hash code and gives each core the one that measured
+fastest on it.
+
+| Core type | Found in | Runs | Hashes per step |
+|---|---|---|---|
+| Cortex-A53 | S8 small cores | fold + batched restore (263296) | 1 |
+| Cortex-A55 | S9, S10, S20 small cores | lean + batched restore (396416) | 1 |
+| Mongoose M1/M2 | S8 big cores | threaded (7552) | 2 |
+| Mongoose M3 / M5 | S9, S20 big cores | lean (2467) | 3 |
+| Mongoose M4 | S10 big cores | standard (419) | 3 |
+| Cortex-A75 / A76 | S10, S20 middle cores | threaded (7552) | 2 |
+| Cortex-A73 | many 2017-2018 phones | standard, older form (384) | 2 |
+| Other 64-bit ARM | | general version (483) | 2 |
+
+What the names mean:
+
+- **Several hashes per step:** the big cores work on two or three hashes at once, so while one waits,
+  another can use the core. This is the largest single gain on the big cores. The S8's big cores stop
+  at two because three no longer fit their fastest cache.
+- **Standard:** the base for all versions: branch-free code for the parts that are a coin toss, and the
+  key is restored after each hash from a clean copy instead of being rebuilt.
+- **Fold:** merges the "which work" and "how many times" decisions into one jump, so the core guesses
+  wrong less often. Pays on the S8's cores; the newer Mongoose cores predict well enough without it.
+- **Lean:** fewer instructions around each jump. Pays on cores that are limited by instruction count.
+- **Threaded:** lean, plus each round's work jumps straight to the next round's instead of returning
+  to a central switch.
+- **Batched restore:** puts the key back four rounds at a time, which suits the small in-order cores.
+
+You can see each thread's choice when the miner starts, for example
+`Verus thread 6 on cpu 6: 3 nonce(s) per step (SEL 2467)`. To force a version, set `VERUS_SEL`
+(or `VERUS_SELMAP` per core type) before starting. The normal build only contains the versions above;
+build with `--all-variants` to try the experimental ones.
+
 ## For developers
 
 - `build-verus.sh` builds the miner in any checkout (`bash build-verus.sh`); the install scripts call it.
