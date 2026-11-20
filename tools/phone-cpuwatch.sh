@@ -31,8 +31,12 @@ for o in "$@"; do
 		VERUS_SEL=*|VERUS_SEL1=*|VERUS_LANES=*|VERUS_PRE1=*|VERUS_X3=*|VERUS_SORT=*)
 			case "${o#*=}" in ''|*[!0-9]*) echo "bad value in $o"; exit 2;; esac; export "$o";;
 		stune) STUNE=1;;   # apply the scheduler settings of github.com/iSonik/S9-Tweak- (root; restored at the end)
-		pool=*) # a real pool session: ONLY the user's own local stratum, at the user's explicit request (2026-11-15)
-			[ "${o#pool=}" = "stratum+tcp://192.168.1.12:8000" ] || { echo "pool not allowed: ${o#pool=}"; exit 2; }; POOL="${o#pool=}";;
+		pool=*) # a real pool session on a local-network stratum, only at the user's explicit request
+			# only a stratum on the local network (private IPv4 address): test phones never mine on a public pool
+			case "${o#pool=}" in
+				stratum+tcp://192.168.[0-9]*:[0-9]*|stratum+tcp://10.[0-9]*:[0-9]*|stratum+tcp://172.1[6-9].[0-9]*:[0-9]*|stratum+tcp://172.2[0-9].[0-9]*:[0-9]*|stratum+tcp://172.3[01].[0-9]*:[0-9]*) POOL="${o#pool=}";;
+				*) echo "pool not allowed (local network addresses only): ${o#pool=}"; exit 2;;
+			esac;;
 		worker=*) case "${o#worker=}" in ''|*[!A-Za-z0-9.]*) echo "bad worker name"; exit 2;; esac; WORKER="${o#worker=}";;
 		bin=*) case "${o#bin=}" in ''|*[!a-z0-9-]*) echo "bad binary name in $o"; exit 2;; esac; WANTBIN="${o#bin=}";;
 		*) MOPTS+=("$o");;
