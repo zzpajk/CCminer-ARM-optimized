@@ -63,6 +63,9 @@ curl -fsSL https://raw.githubusercontent.com/zzpajk/ccminer-ARM-percore/main/too
 bash ~/userland-install.sh
 ```
 
+**Note:** this installer is new and has not been tested on a phone yet. If something goes wrong, please
+open an issue with the last lines it printed.
+
 It asks for your UserLAnd password once. The result is the same as in Termux: the miner is in `~/ccminer`.
 The same script also works on other Debian or Ubuntu ARM64 systems (for example a 64-bit Raspberry Pi OS).
 
