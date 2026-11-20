@@ -54,7 +54,7 @@ cat > "$DIR/verus.conf" <<'CONF_END'
       "timeout": 150
     }
   ],
-  "user": "i81XL8ZpuCo9jmWLv5L5ikdxrGuHrrpQLz.unconfigeredminer",
+  "user": "i81XL8ZpuCo9jmWLv5L5ikdxrGuHrrpQLz.unconfigured",
   "algo": "verus",
   "threads": 8,
   "cpu-priority": 1,
